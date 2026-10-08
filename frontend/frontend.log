@@ -1,0 +1,17 @@
+
+> moe-weight-analyzer-frontend@0.1.0 dev
+> vite --host 127.0.0.1 --port 5173
+
+
+  VITE v5.4.21  ready in 329 ms
+
+  ➜  Local:   http://127.0.0.1:5173/
+10:56:48 AM [vite] page reload index.html
+10:56:48 AM [vite] hmr update /src/App.tsx
+10:56:48 AM [vite] page reload src/api.ts
+10:56:48 AM [vite] page reload src/main.tsx
+10:56:48 AM [vite] hmr update /src/components/DomainSelector.tsx
+10:56:48 AM [vite] hmr update /src/components/ExpertTable.tsx
+10:56:48 AM [vite] vite.config.ts changed, restarting server...
+10:56:48 AM [vite] server restarted.
+(!) Could not auto-determine entry point from rollupOptions or html files and there are no explicit optimizeDeps.include patterns. Skipping dependency pre-bundling.
