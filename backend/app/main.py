@@ -1,8 +1,8 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from app.analyzer import MoEAnalyzer, PromptAnalysisRequest
+from app.analyzer import MoEAnalyzer, PromptAnalysisRequest, LoadModelRequest
 
-app = FastAPI(title="MoE Weight & Expert Analyzer API", version="1.0.0")
+app = FastAPI(title="MoE Weight & Expert Analyzer API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -22,6 +22,17 @@ def health_check():
 def get_domains():
     return analyzer.get_available_domains()
 
+@app.get("/api/models")
+def get_models():
+    return analyzer.get_available_models()
+
+@app.post("/api/model/load")
+def load_model(payload: LoadModelRequest):
+    try:
+        return analyzer.load_model(payload.model_id)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.get("/api/analyze/{domain_id}")
 def analyze_domain(domain_id: str):
     try:
@@ -38,11 +49,4 @@ def analyze_prompt(payload: PromptAnalysisRequest):
 
 @app.get("/api/model/info")
 def get_model_info():
-    return {
-        "model_name": "Local MoE Model (Mixtral-8x7B / DeepSeek-MoE equivalent)",
-        "architecture": "Mixture of Experts",
-        "num_layers": 4,
-        "experts_per_layer": 8,
-        "total_experts": 32,
-        "active_experts_per_tok": 2
-    }
+    return analyzer.get_model_info()

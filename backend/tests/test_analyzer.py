@@ -46,3 +46,21 @@ def test_analyze_empty_prompt_raises_value_error():
     analyzer = MoEAnalyzer()
     with pytest.raises(ValueError, match="Le prompt ne peut pas être vide"):
         analyzer.analyze_prompt("   ")
+
+def test_different_prompts_produce_distinct_token_routing():
+    analyzer = MoEAnalyzer()
+    r1 = analyzer.analyze_prompt("Écris une fonction Python récursive pour trier un tableau")
+    r2 = analyzer.analyze_prompt("Déploie un serveur SQL Docker avec une API REST FastAPI")
+    assert r1.token_routing is not None and len(r1.token_routing) > 0
+    assert r2.token_routing is not None and len(r2.token_routing) > 0
+    # Token routing and expert distributions must react to the specific tokens of each prompt
+    sig1 = [(e.layer_id, e.expert_id, e.usage_percentage) for e in r1.experts]
+    sig2 = [(e.layer_id, e.expert_id, e.usage_percentage) for e in r2.experts]
+    assert sig1 != sig2
+
+def test_available_models_catalog():
+    analyzer = MoEAnalyzer()
+    models = analyzer.get_available_models()
+    ids = [m["id"] for m in models]
+    assert "google/switch-base-8" in ids
+    assert "simulated" in ids

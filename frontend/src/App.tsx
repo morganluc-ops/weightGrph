@@ -3,27 +3,40 @@ import { DomainSelector } from './components/DomainSelector';
 import { ExpertTable } from './components/ExpertTable';
 import { MoENetworkGraph } from './components/MoENetworkGraph';
 import { PromptAnalyzer } from './components/PromptAnalyzer';
-import { fetchDomains, fetchDomainAnalysis, fetchModelInfo, analyzeCustomPrompt } from './api';
-import { DomainsMap, DomainAnalysisResult, ModelInfo } from './types';
+import { ModelManager } from './components/ModelManager';
+import {
+  fetchDomains,
+  fetchDomainAnalysis,
+  fetchModelInfo,
+  fetchAvailableModels,
+  loadMoEModel,
+  analyzeCustomPrompt,
+} from './api';
+import { DomainsMap, DomainAnalysisResult, ModelInfo, MoEModelOption } from './types';
 
 export const App: React.FC = () => {
   const [domains, setDomains] = useState<DomainsMap>({});
+  const [models, setModels] = useState<MoEModelOption[]>([]);
   const [selectedDomain, setSelectedDomain] = useState<string>('');
+  const [lastCustomPrompt, setLastCustomPrompt] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<DomainAnalysisResult | null>(null);
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
+  const [loadingModel, setLoadingModel] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function init() {
       try {
         setLoading(true);
-        const [domainsData, infoData] = await Promise.all([
+        const [domainsData, infoData, modelsData] = await Promise.all([
           fetchDomains(),
           fetchModelInfo(),
+          fetchAvailableModels().catch(() => []),
         ]);
         setDomains(domainsData);
         setModelInfo(infoData);
+        setModels(modelsData);
 
         const firstDomain = Object.keys(domainsData)[0];
         if (firstDomain) {
@@ -42,6 +55,7 @@ export const App: React.FC = () => {
 
   const handleDomainSelect = async (domainId: string) => {
     setSelectedDomain(domainId);
+    setLastCustomPrompt(null);
     try {
       setLoading(true);
       setError(null);
@@ -55,6 +69,7 @@ export const App: React.FC = () => {
   };
 
   const handlePromptAnalyze = async (prompt: string) => {
+    setLastCustomPrompt(prompt);
     try {
       setLoading(true);
       setError(null);
@@ -63,6 +78,32 @@ export const App: React.FC = () => {
     } catch (err: any) {
       setError(err.message || 'Erreur lors de l\'analyse du prompt');
     } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleModelSelect = async (modelId: string) => {
+    try {
+      setLoadingModel(true);
+      setError(null);
+      const updatedInfo = await loadMoEModel(modelId);
+      setModelInfo(updatedInfo);
+      const updatedModels = await fetchAvailableModels().catch(() => models);
+      setModels(updatedModels);
+
+      // Re-run current analysis with the newly loaded model
+      setLoading(true);
+      if (lastCustomPrompt) {
+        const data = await analyzeCustomPrompt(lastCustomPrompt);
+        setAnalysis(data);
+      } else if (selectedDomain) {
+        const data = await fetchDomainAnalysis(selectedDomain);
+        setAnalysis(data);
+      }
+    } catch (err: any) {
+      setError(err.message || 'Erreur lors du chargement du modèle MoE');
+    } finally {
+      setLoadingModel(false);
       setLoading(false);
     }
   };
@@ -89,6 +130,15 @@ export const App: React.FC = () => {
         </div>
       )}
 
+      {models.length > 0 && (
+        <ModelManager
+          models={models}
+          currentModel={modelInfo}
+          onSelectModel={handleModelSelect}
+          loadingModel={loadingModel}
+        />
+      )}
+
       {Object.keys(domains).length > 0 && (
         <DomainSelector
           domains={domains}
@@ -99,9 +149,11 @@ export const App: React.FC = () => {
 
       <PromptAnalyzer
         onAnalyzePrompt={handlePromptAnalyze}
-        loading={loading}
+        loading={loading || loadingModel}
         detectedDomains={analysis?.detected_domains}
         domainsMap={domains}
+        tokenRouting={analysis?.token_routing}
+        isRealInference={analysis?.is_real_inference}
       />
 
       {!loading && (

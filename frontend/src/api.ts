@@ -1,4 +1,4 @@
-import { DomainsMap, DomainAnalysisResult, ModelInfo } from './types';
+import { DomainsMap, DomainAnalysisResult, ModelInfo, MoEModelOption } from './types';
 
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
@@ -24,6 +24,27 @@ export async function fetchModelInfo(): Promise<ModelInfo> {
   const response = await fetch(`${API_BASE_URL}/model/info`);
   if (!response.ok) {
     throw new Error('Erreur lors du chargement des informations du modèle');
+  }
+  return response.json();
+}
+
+export async function fetchAvailableModels(): Promise<MoEModelOption[]> {
+  const response = await fetch(`${API_BASE_URL}/models`);
+  if (!response.ok) {
+    throw new Error('Erreur lors du chargement de la liste des modèles MoE');
+  }
+  return response.json();
+}
+
+export async function loadMoEModel(modelId: string): Promise<ModelInfo> {
+  const response = await fetch(`${API_BASE_URL}/model/load`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model_id: modelId }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || `Erreur lors du chargement du modèle ${modelId}`);
   }
   return response.json();
 }

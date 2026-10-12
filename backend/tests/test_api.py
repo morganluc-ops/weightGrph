@@ -54,3 +54,15 @@ def test_analyze_empty_prompt_endpoint():
     response = client.post("/api/analyze-prompt", json={"prompt": ""})
     assert response.status_code == 400
     assert "Le prompt ne peut pas être vide" in response.json()["detail"]
+
+def test_get_models_endpoint():
+    response = client.get("/api/models")
+    assert response.status_code == 200
+    models = response.json()
+    assert isinstance(models, list)
+    assert any(m["id"] == "google/switch-base-8" for m in models)
+
+def test_load_simulated_model_endpoint():
+    response = client.post("/api/model/load", json={"model_id": "simulated"})
+    assert response.status_code == 200
+    assert response.json()["model_id"] == "simulated"

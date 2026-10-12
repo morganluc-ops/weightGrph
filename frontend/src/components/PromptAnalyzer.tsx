@@ -1,11 +1,13 @@
 import React, { useState } from 'react';
-import { DomainsMap } from '../types';
+import { DomainsMap, TokenRoutingInfo } from '../types';
 
 interface PromptAnalyzerProps {
   onAnalyzePrompt: (prompt: string) => void;
   loading: boolean;
   detectedDomains?: { [domainId: string]: number };
   domainsMap: DomainsMap;
+  tokenRouting?: TokenRoutingInfo[];
+  isRealInference?: boolean;
 }
 
 const SAMPLE_PROMPTS = [
@@ -19,6 +21,8 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
   loading,
   detectedDomains,
   domainsMap,
+  tokenRouting,
+  isRealInference,
 }) => {
   const [promptText, setPromptText] = useState<string>('');
   const [showWarning, setShowWarning] = useState<boolean>(false);
@@ -140,7 +144,7 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
       {detectedDomains && Object.keys(detectedDomains).length > 0 && (
         <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#334155' }}>
-            Pondération multi-domaines détectée :
+            Pondération sémantique détectée :
           </span>
           {Object.entries(detectedDomains).map(([domId, pct]) => (
             <span
@@ -157,6 +161,32 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
               {domainsMap[domId] || domId} : {pct}%
             </span>
           ))}
+        </div>
+      )}
+
+      {tokenRouting && tokenRouting.length > 0 && (
+        <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
+          <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#334155', marginBottom: '6px' }}>
+            🔬 Routage Gating Network par Token (Couche 0 {isRealInference ? '— Tenseur PyTorch réel' : '— Simulation Top-K'}) :
+          </div>
+          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            {tokenRouting.map((tr, i) => (
+              <span
+                key={`${tr.token}-${i}`}
+                style={{
+                  fontSize: '11px',
+                  padding: '3px 7px',
+                  backgroundColor: '#0f172a',
+                  color: '#f8fafc',
+                  borderRadius: '4px',
+                  fontFamily: 'monospace',
+                }}
+              >
+                {tr.token} <span style={{ color: '#38bdf8' }}>→ E{tr.expert_id}</span>{' '}
+                <span style={{ color: '#34d399' }}>({tr.confidence}%)</span>
+              </span>
+            ))}
+          </div>
         </div>
       )}
     </div>
