@@ -41,3 +41,16 @@ def test_get_model_info():
     assert info["model_name"] == "Local MoE Model (Mixtral-8x7B / DeepSeek-MoE equivalent)"
     assert info["num_layers"] == 4
     assert info["experts_per_layer"] == 8
+
+def test_analyze_prompt_endpoint():
+    response = client.post("/api/analyze-prompt", json={"prompt": "Écris un algorithme Python pour calculer une intégrale"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["domain_id"] == "custom_prompt"
+    assert len(data["experts"]) > 0
+    assert "code" in data["detected_domains"]
+
+def test_analyze_empty_prompt_endpoint():
+    response = client.post("/api/analyze-prompt", json={"prompt": ""})
+    assert response.status_code == 400
+    assert "Le prompt ne peut pas être vide" in response.json()["detail"]

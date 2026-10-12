@@ -10,6 +10,7 @@ export interface DomainAnalysisResult {
   domain_id: string;
   domain_name: string;
   experts: ExpertUsage[];
+  detected_domains?: { [domainId: string]: number };
 }
 
 export interface DomainsMap {

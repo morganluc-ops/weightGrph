@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from app.analyzer import MoEAnalyzer
+from app.analyzer import MoEAnalyzer, PromptAnalysisRequest
 
 app = FastAPI(title="MoE Weight & Expert Analyzer API", version="1.0.0")
 
@@ -28,6 +28,13 @@ def analyze_domain(domain_id: str):
         return analyzer.analyze_domain(domain_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+@app.post("/api/analyze-prompt")
+def analyze_prompt(payload: PromptAnalysisRequest):
+    try:
+        return analyzer.analyze_prompt(payload.prompt)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/model/info")
 def get_model_info():

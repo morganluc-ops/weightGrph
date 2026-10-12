@@ -1,7 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { DomainSelector } from './components/DomainSelector';
 import { ExpertTable } from './components/ExpertTable';
-import { fetchDomains, fetchDomainAnalysis, fetchModelInfo } from './api';
+import { MoENetworkGraph } from './components/MoENetworkGraph';
+import { PromptAnalyzer } from './components/PromptAnalyzer';
+import { fetchDomains, fetchDomainAnalysis, fetchModelInfo, analyzeCustomPrompt } from './api';
 import { DomainsMap, DomainAnalysisResult, ModelInfo } from './types';
 
 export const App: React.FC = () => {
@@ -52,14 +54,27 @@ export const App: React.FC = () => {
     }
   };
 
+  const handlePromptAnalyze = async (prompt: string) => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await analyzeCustomPrompt(prompt);
+      setAnalysis(data);
+    } catch (err: any) {
+      setError(err.message || 'Erreur lors de l\'analyse du prompt');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
-    <div style={{ maxWidth: '1000px', margin: '0 auto', padding: '20px', fontFamily: 'system-ui, sans-serif' }}>
+    <div style={{ maxWidth: '1040px', margin: '0 auto', padding: '20px', fontFamily: 'system-ui, sans-serif' }}>
       <header style={{ borderBottom: '2px solid #2c3e50', paddingBottom: '15px', marginBottom: '25px' }}>
         <h1 style={{ margin: 0, color: '#2c3e50', fontSize: '28px' }}>
           🧠 MoE Weight & Expert Visualizer
         </h1>
         <p style={{ color: '#7f8c8d', margin: '5px 0 0 0' }}>
-          Analyse de l'utilisation des poids et experts d'un modèle Mixture-of-Experts par domaine
+          Analyse de l'utilisation des poids et experts d'un modèle Mixture-of-Experts par domaine ou prompt libre
         </p>
         {modelInfo && (
           <div style={{ marginTop: '10px', fontSize: '13px', backgroundColor: '#ecf0f1', padding: '8px 12px', borderRadius: '4px' }}>
@@ -79,6 +94,21 @@ export const App: React.FC = () => {
           domains={domains}
           selectedDomain={selectedDomain}
           onSelectDomain={handleDomainSelect}
+        />
+      )}
+
+      <PromptAnalyzer
+        onAnalyzePrompt={handlePromptAnalyze}
+        loading={loading}
+        detectedDomains={analysis?.detected_domains}
+        domainsMap={domains}
+      />
+
+      {!loading && (
+        <MoENetworkGraph
+          analysis={analysis}
+          numLayers={modelInfo?.num_layers || 4}
+          expertsPerLayer={modelInfo?.experts_per_layer || 8}
         />
       )}
 
