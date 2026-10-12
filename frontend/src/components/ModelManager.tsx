@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { MoEModelOption, ModelInfo } from '../types';
 
 interface ModelManagerProps {
@@ -14,8 +14,16 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
   onSelectModel,
   loadingModel,
 }) => {
-  const [selectedId, setSelectedId] = useState<string>(currentModel?.model_id || 'simulated');
+  const [selectedId, setSelectedId] = useState<string>(
+    currentModel?.model_id || (models[0] ? models[0].id : '')
+  );
   const [customHuggingFaceId, setCustomHuggingFaceId] = useState<string>('');
+
+  useEffect(() => {
+    if (currentModel?.model_id) {
+      setSelectedId(currentModel.model_id);
+    }
+  }, [currentModel?.model_id]);
 
   const handleLoadSelected = () => {
     const target = customHuggingFaceId.trim() || selectedId;
@@ -25,22 +33,20 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
     }
   };
 
-  const isReal = Boolean(currentModel?.is_real_model);
-
   return (
     <div
       data-testid="model-manager"
       style={{
         marginBottom: '20px',
         padding: '15px',
-        backgroundColor: isReal ? '#ecfdf5' : '#f1f5f9',
-        border: `1px solid ${isReal ? '#10b981' : '#cbd5e1'}`,
+        backgroundColor: '#ecfdf5',
+        border: '1px solid #10b981',
         borderRadius: '8px',
       }}
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginBottom: '10px' }}>
         <div style={{ fontWeight: 'bold', color: '#0f172a', fontSize: '15px' }}>
-          ⚙️ Moteur MoE & Gestionnaire de Modèles (HuggingFace / PyTorch)
+          ⚙️ Modèle MoE PyTorch / HuggingFace Actif
         </div>
         <span
           style={{
@@ -48,13 +54,11 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
             borderRadius: '12px',
             fontSize: '12px',
             fontWeight: 'bold',
-            backgroundColor: isReal ? '#059669' : '#475569',
+            backgroundColor: '#059669',
             color: '#ffffff',
           }}
         >
-          {isReal
-            ? `🟢 Vrai Modèle MoE Actif (${currentModel?.device?.toUpperCase() || 'CPU'}) — router_logits réels`
-            : '⚡ Mode Simulation Dynamique Token-Level (Sans téléchargement)'}
+          🟢 Inférence PyTorch Réelle ({currentModel?.device?.toUpperCase() || 'CPU'}) — Extraction directe de router_logits
         </span>
       </div>
 
@@ -68,9 +72,9 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
             padding: '8px 12px',
             fontSize: '14px',
             borderRadius: '6px',
-            border: '1px solid #94a3b8',
+            border: '1px solid #10b981',
             backgroundColor: '#fff',
-            minWidth: '300px',
+            minWidth: '320px',
           }}
         >
           {models.map((m) => (
@@ -84,7 +88,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
           type="text"
           value={customHuggingFaceId}
           onChange={(e) => setCustomHuggingFaceId(e.target.value)}
-          placeholder="Ou ID HuggingFace personnalisé (ex: google/switch-base-8)..."
+          placeholder="Ou saisir n'importe quel ID HuggingFace MoE (ex: google/switch-base-8)..."
           disabled={loadingModel}
           style={{
             flex: 1,
@@ -110,7 +114,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
             cursor: loadingModel ? 'wait' : 'pointer',
           }}
         >
-          {loadingModel ? '⏳ Chargement du modèle MoE...' : 'Charger le Modèle'}
+          {loadingModel ? '⏳ Téléchargement / Chargement PyTorch...' : 'Charger le Modèle MoE'}
         </button>
       </div>
     </div>
