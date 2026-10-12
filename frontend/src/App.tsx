@@ -23,6 +23,7 @@ export const App: React.FC = () => {
   const [modelInfo, setModelInfo] = useState<ModelInfo | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [loadingModel, setLoadingModel] = useState<boolean>(false);
+  const [loadingTargetId, setLoadingTargetId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -85,18 +86,21 @@ export const App: React.FC = () => {
   const handleModelSelect = async (modelId: string) => {
     try {
       setLoadingModel(true);
+      setLoadingTargetId(modelId);
       setError(null);
+
+      // Reset analyses to start fresh on the new model
+      setAnalysis(null);
+      setLastCustomPrompt(null);
+
       const updatedInfo = await loadMoEModel(modelId);
       setModelInfo(updatedInfo);
       const updatedModels = await fetchAvailableModels().catch(() => models);
       setModels(updatedModels);
 
-      // Re-run current analysis with the newly loaded model
-      setLoading(true);
-      if (lastCustomPrompt) {
-        const data = await analyzeCustomPrompt(lastCustomPrompt);
-        setAnalysis(data);
-      } else if (selectedDomain) {
+      // Recompute initial domain analysis cleanly with the new model
+      if (selectedDomain) {
+        setLoading(true);
         const data = await fetchDomainAnalysis(selectedDomain);
         setAnalysis(data);
       }
@@ -104,6 +108,7 @@ export const App: React.FC = () => {
       setError(err.message || 'Erreur lors du chargement du modèle MoE');
     } finally {
       setLoadingModel(false);
+      setLoadingTargetId(null);
       setLoading(false);
     }
   };
@@ -115,11 +120,11 @@ export const App: React.FC = () => {
           🧠 MoE Weight & Expert Visualizer
         </h1>
         <p style={{ color: '#7f8c8d', margin: '5px 0 0 0' }}>
-          Analyse de l'utilisation des poids et experts d'un modèle Mixture-of-Experts par domaine ou prompt libre
+          Analyse en temps réel de l'activation des poids et experts d'un modèle Mixture-of-Experts (PyTorch MoE)
         </p>
         {modelInfo && (
           <div style={{ marginTop: '10px', fontSize: '13px', backgroundColor: '#ecf0f1', padding: '8px 12px', borderRadius: '4px' }}>
-            <strong>Modèle détecté :</strong> {modelInfo.model_name} | <strong>Couches :</strong> {modelInfo.num_layers} | <strong>Experts par couche :</strong> {modelInfo.experts_per_layer} | <strong>Total Experts :</strong> {modelInfo.total_experts}
+            <strong>Modèle actif :</strong> {modelInfo.model_name} | <strong>Couches MoE :</strong> {modelInfo.num_layers} | <strong>Experts par couche :</strong> {modelInfo.experts_per_layer} | <strong>Total Experts :</strong> {modelInfo.total_experts} | <strong>Périphérique :</strong> {modelInfo.device?.toUpperCase()}
           </div>
         )}
       </header>
@@ -136,6 +141,7 @@ export const App: React.FC = () => {
           currentModel={modelInfo}
           onSelectModel={handleModelSelect}
           loadingModel={loadingModel}
+          loadingTargetId={loadingTargetId}
         />
       )}
 
@@ -156,7 +162,13 @@ export const App: React.FC = () => {
         isRealInference={analysis?.is_real_inference}
       />
 
-      {!loading && (
+      {loading && !analysis && (
+        <div style={{ padding: '30px', textAlign: 'center', color: '#2563eb', fontWeight: 'bold' }}>
+          ⏳ Inférence PyTorch en cours sur le modèle actif...
+        </div>
+      )}
+
+      {!loading && analysis && (
         <MoENetworkGraph
           analysis={analysis}
           numLayers={modelInfo?.num_layers || 4}
