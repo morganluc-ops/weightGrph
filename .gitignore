@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Python virtual environments
+venv/
+.venv/
+**/venv/
+
+# Python cache
+__pycache__/
+**/__pycache__/
+*.pyc
+.pytest_cache/
+
+# Logs and Vite cache
+*.log
+.vite/
+**/.vite/
+
+# Build outputs
+dist/
+build/
