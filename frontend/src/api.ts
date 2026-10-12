@@ -1,4 +1,4 @@
-import { DomainsMap, DomainAnalysisResult, ModelInfo, MoEModelOption } from './types';
+import { DomainsMap, DomainAnalysisResult, ModelInfo, MoEModelOption, DownloadProgressInfo } from './types';
 
 const API_BASE_URL = 'http://127.0.0.1:8000/api';
 
@@ -32,6 +32,14 @@ export async function fetchAvailableModels(): Promise<MoEModelOption[]> {
   const response = await fetch(`${API_BASE_URL}/models`);
   if (!response.ok) {
     throw new Error('Erreur lors du chargement de la liste des modèles MoE');
+  }
+  return response.json();
+}
+
+export async function fetchModelProgress(): Promise<DownloadProgressInfo> {
+  const response = await fetch(`${API_BASE_URL}/model/progress`);
+  if (!response.ok) {
+    throw new Error('Erreur lors de la récupération de la progression');
   }
   return response.json();
 }

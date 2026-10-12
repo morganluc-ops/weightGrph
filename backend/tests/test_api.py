@@ -64,6 +64,13 @@ def test_get_models_endpoint():
     assert isinstance(models, list)
     assert all(m["is_real"] is True for m in models)
 
+def test_get_model_progress_endpoint():
+    response = client.get("/api/model/progress")
+    assert response.status_code == 200
+    prog = response.json()
+    assert "status" in prog
+    assert "progress_percent" in prog
+
 def test_load_real_model_endpoint():
     response = client.post("/api/model/load", json={"model_id": DEFAULT_REAL_MOE_MODEL})
     assert response.status_code == 200

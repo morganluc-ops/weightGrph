@@ -50,3 +50,16 @@ export interface MoEModelOption {
   is_real: boolean;
   active?: boolean;
 }
+
+export interface DownloadProgressInfo {
+  status: 'idle' | 'downloading' | 'loading_tensors' | 'ready' | 'error';
+  model_id: string;
+  downloaded_bytes: number;
+  total_bytes: number;
+  downloaded_mb: number;
+  total_mb: number;
+  progress_percent: number;
+  speed_mb_s: number;
+  current_file: string;
+  stage_message: string;
+}

@@ -26,6 +26,10 @@ def get_domains():
 def get_models():
     return analyzer.get_available_models()
 
+@app.get("/api/model/progress")
+def get_model_progress():
+    return analyzer.get_download_progress()
+
 @app.post("/api/model/load")
 def load_model(payload: LoadModelRequest):
     try:

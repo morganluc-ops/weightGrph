@@ -4,8 +4,10 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
+import time
 import torch
 from transformers import AutoTokenizer, AutoConfig, AutoModelForSeq2SeqLM, AutoModelForCausalLM
+from huggingface_hub import HfApi, snapshot_download
 
 DEFAULT_REAL_MOE_MODEL = "optimum-intel-internal-testing/tiny-random-qwen1.5-moe"
 
@@ -41,6 +43,19 @@ class PromptAnalysisRequest(BaseModel):
 
 class LoadModelRequest(BaseModel):
     model_id: str
+
+
+class DownloadProgressInfo(BaseModel):
+    status: str  # "idle" | "downloading" | "loading_tensors" | "ready" | "error"
+    model_id: str
+    downloaded_bytes: int
+    total_bytes: int
+    downloaded_mb: float
+    total_mb: float
+    progress_percent: float
+    speed_mb_s: float
+    current_file: str
+    stage_message: str
 
 
 AVAILABLE_MOE_MODELS: List[Dict[str, Any]] = [
@@ -130,7 +145,23 @@ class MoEAnalyzer:
         self.expert_param_str: str = "1.2M"
         self.model_meta: Dict[str, Any] = {}
 
+        self.progress_state: Dict[str, Any] = {
+            "status": "idle",
+            "model_id": "",
+            "downloaded_bytes": 0,
+            "total_bytes": 0,
+            "downloaded_mb": 0.0,
+            "total_mb": 0.0,
+            "progress_percent": 0.0,
+            "speed_mb_s": 0.0,
+            "current_file": "",
+            "stage_message": "",
+        }
+
         self.load_model(initial_model_id)
+
+    def get_download_progress(self) -> Dict[str, Any]:
+        return self.progress_state
 
     def get_available_domains(self) -> Dict[str, str]:
         return self.domains_info
@@ -174,7 +205,110 @@ class MoEAnalyzer:
             self.expert_param_str = param_str
             self.current_model_id = model_id
             self.hf_device = meta["device"]
+            self.progress_state = {
+                "status": "ready",
+                "model_id": model_id,
+                "downloaded_bytes": 0,
+                "total_bytes": 0,
+                "downloaded_mb": 0.0,
+                "total_mb": 0.0,
+                "progress_percent": 100.0,
+                "speed_mb_s": 0.0,
+                "current_file": "",
+                "stage_message": f"Modèle {model_id} prêt en mémoire (chargé depuis le cache local)",
+            }
             return self.model_meta
+
+        # Step 1: Pre-download snapshot with live progress tracking
+        self.progress_state = {
+            "status": "downloading",
+            "model_id": model_id,
+            "downloaded_bytes": 0,
+            "total_bytes": 0,
+            "downloaded_mb": 0.0,
+            "total_mb": 0.0,
+            "progress_percent": 0.0,
+            "speed_mb_s": 0.0,
+            "current_file": "Initialisation...",
+            "stage_message": f"Préparation du téléchargement de {model_id}...",
+        }
+
+        progress_ref = self.progress_state
+        start_time = time.time()
+        last_time = [start_time]
+        last_bytes = [0]
+
+        # Calculate estimated total size from metadata
+        total_repo_bytes = 0
+        try:
+            api = HfApi()
+            info = api.model_info(model_id, files_metadata=True)
+            for s in info.siblings:
+                fn = s.rfilename.lower()
+                if not any(fn.endswith(ext) for ext in [".msgpack", ".h5", ".ot", ".png", ".jpg"]):
+                    total_repo_bytes += (s.size or 0)
+        except Exception:
+            total_repo_bytes = 100 * 1024 * 1024  # fallback 100MB
+
+        progress_ref["total_bytes"] = total_repo_bytes
+        progress_ref["total_mb"] = round(total_repo_bytes / (1024 * 1024), 1)
+
+        downloaded_bytes_so_far = [0]
+
+        class LiveProgressTqdm:
+            def __init__(self, *args, total=None, desc=None, **kwargs):
+                self.total = total or 0
+                self.desc = desc or ""
+                self.file_name = self.desc.split("/")[-1].split("\\")[-1] or "poids"
+                self.n = 0
+                progress_ref["current_file"] = self.file_name
+                progress_ref["stage_message"] = f"Téléchargement : {self.file_name}"
+
+            def update(self, n=1):
+                self.n += n
+                downloaded_bytes_so_far[0] += n
+                now = time.time()
+                dt = now - last_time[0]
+                if dt >= 0.25:
+                    speed = (downloaded_bytes_so_far[0] - last_bytes[0]) / (dt * 1024 * 1024)
+                    progress_ref["speed_mb_s"] = round(max(0.0, speed), 1)
+                    last_time[0] = now
+                    last_bytes[0] = downloaded_bytes_so_far[0]
+
+                d_mb = round(downloaded_bytes_so_far[0] / (1024 * 1024), 1)
+                t_mb = progress_ref["total_mb"] or round(self.total / (1024 * 1024), 1) or 1.0
+                pct = round(min(99.0, (d_mb / t_mb) * 100.0), 1) if t_mb > 0 else 0.0
+
+                progress_ref["downloaded_bytes"] = downloaded_bytes_so_far[0]
+                progress_ref["downloaded_mb"] = d_mb
+                progress_ref["progress_percent"] = pct
+                progress_ref["stage_message"] = (
+                    f"Téléchargement {self.file_name} ({d_mb} Mo / {t_mb} Mo - {pct}%)"
+                )
+
+            def close(self):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                pass
+
+        try:
+            snapshot_download(
+                repo_id=model_id,
+                tqdm_class=LiveProgressTqdm,
+                ignore_patterns=["*.msgpack", "*.h5", "*.ot", "*.png", "*.jpg"],
+            )
+        except Exception as e:
+            # If snapshot download fails, let from_pretrained report exact error
+            pass
+
+        # Step 2: Model instantiation & tensor loading into PyTorch
+        progress_ref["status"] = "loading_tensors"
+        progress_ref["progress_percent"] = 100.0
+        progress_ref["stage_message"] = "Montage des tenseurs et allocation VRAM/RAM..."
 
         try:
             config = AutoConfig.from_pretrained(model_id)
@@ -241,8 +375,13 @@ class MoEAnalyzer:
             self.current_model_id = model_id
             self.expert_param_str = param_str
             self.model_meta = dict(meta)
+
+            progress_ref["status"] = "ready"
+            progress_ref["stage_message"] = f"Modèle {model_id} monté et prêt !"
             return self.model_meta
         except Exception as e:
+            progress_ref["status"] = "error"
+            progress_ref["stage_message"] = f"Erreur : {str(e)}"
             raise ValueError(f"Impossible de charger le modèle MoE '{model_id}': {str(e)}")
 
     def _run_real_moe_inference(self, text: str) -> tuple[List[ExpertUsage], List[TokenRoutingInfo]]:
@@ -308,7 +447,6 @@ class MoEAnalyzer:
             topk_vals, topk_indices = torch.topk(probs, k=k, dim=-1)
 
             for tok_idx in range(seq_len):
-                # Accumulate real Top-K gating weights selected by the MoE router
                 for rank_i in range(k):
                     exp_id = int(topk_indices[tok_idx, rank_i].item())
                     gate_prob = float(topk_vals[tok_idx, rank_i].item())

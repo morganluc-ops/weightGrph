@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { MoEModelOption, ModelInfo } from '../types';
+import { MoEModelOption, ModelInfo, DownloadProgressInfo } from '../types';
+import { fetchModelProgress } from '../api';
 
 interface ModelManagerProps {
   models: MoEModelOption[];
@@ -21,6 +22,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
   );
   const [customHuggingFaceId, setCustomHuggingFaceId] = useState<string>('');
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
+  const [progressInfo, setProgressInfo] = useState<DownloadProgressInfo | null>(null);
 
   useEffect(() => {
     if (currentModel?.model_id) {
@@ -30,16 +32,33 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
 
   useEffect(() => {
     let interval: any = null;
+    let pollInterval: any = null;
+
     if (loadingModel) {
       setElapsedSeconds(0);
       interval = setInterval(() => {
         setElapsedSeconds((prev) => prev + 1);
       }, 1000);
+
+      const checkProgress = async () => {
+        try {
+          const prog = await fetchModelProgress();
+          setProgressInfo(prog);
+        } catch {
+          // ignore transient poll error
+        }
+      };
+
+      checkProgress();
+      pollInterval = setInterval(checkProgress, 400);
     } else {
       setElapsedSeconds(0);
+      setProgressInfo(null);
     }
+
     return () => {
       if (interval) clearInterval(interval);
+      if (pollInterval) clearInterval(pollInterval);
     };
   }, [loadingModel]);
 
@@ -52,6 +71,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
   };
 
   const selectedModelObj = models.find((m) => m.id === selectedId);
+  const displayPercent = progressInfo?.progress_percent ?? (loadingModel ? 5 : 0);
 
   return (
     <div
@@ -134,7 +154,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
             cursor: loadingModel ? 'wait' : 'pointer',
           }}
         >
-          {loadingModel ? '⏳ Chargement en cours...' : 'Charger le Modèle MoE'}
+          {loadingModel ? '⏳ Téléchargement en cours...' : 'Charger le Modèle MoE'}
         </button>
       </div>
 
@@ -142,25 +162,83 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
         <div
           role="status"
           style={{
-            marginTop: '12px',
-            padding: '12px 14px',
+            marginTop: '14px',
+            padding: '14px 16px',
             backgroundColor: '#eff6ff',
             border: '1px solid #3b82f6',
-            borderRadius: '6px',
+            borderRadius: '8px',
             color: '#1e3a8a',
             fontSize: '13px',
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
-            <strong>
-              📥 Téléchargement / Chargement PyTorch en cours : {loadingTargetId || selectedId}
-            </strong>
-            <span style={{ fontWeight: 'bold', fontFamily: 'monospace' }}>
-              Temps écoulé : {elapsedSeconds}s
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px', flexWrap: 'wrap', gap: '6px' }}>
+            <span style={{ fontWeight: 'bold', fontSize: '14px' }}>
+              📥 {loadingTargetId || selectedId}
+            </span>
+            <div style={{ display: 'flex', gap: '12px', fontSize: '12px', fontFamily: 'monospace' }}>
+              {progressInfo?.speed_mb_s ? (
+                <span style={{ color: '#2563eb', fontWeight: 'bold' }}>
+                  ⚡ {progressInfo.speed_mb_s} Mo/s
+                </span>
+              ) : null}
+              <span style={{ color: '#475569', fontWeight: 'bold' }}>
+                ⏱️ {elapsedSeconds}s écoulées
+              </span>
+            </div>
+          </div>
+
+          {/* Real Animated Progress Bar */}
+          <div
+            style={{
+              width: '100%',
+              height: '18px',
+              backgroundColor: '#dbeafe',
+              borderRadius: '9px',
+              overflow: 'hidden',
+              position: 'relative',
+              boxShadow: 'inset 0 1px 2px rgba(0,0,0,0.1)',
+            }}
+          >
+            <div
+              style={{
+                width: `${Math.min(100, Math.max(3, displayPercent))}%`,
+                height: '100%',
+                background: 'linear-gradient(90deg, #3b82f6 0%, #10b981 100%)',
+                transition: 'width 0.3s ease-out',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'flex-end',
+                paddingRight: '6px',
+              }}
+            />
+            <span
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                fontSize: '11px',
+                fontWeight: 'bold',
+                color: displayPercent > 55 ? '#ffffff' : '#1e3a8a',
+              }}
+            >
+              {displayPercent.toFixed(1)} %
             </span>
           </div>
-          <div style={{ color: '#475569', fontSize: '12px' }}>
-            Poids estimés : {selectedModelObj?.size_hint || 'selon le modèle'}. Les tenseurs PyTorch sont téléchargés et montés en RAM/VRAM... Les analyses précédentes ont été réinitialisées.
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '8px', fontSize: '12px', color: '#475569', flexWrap: 'wrap', gap: '6px' }}>
+            <span>
+              <strong>Fichier :</strong> {progressInfo?.current_file || 'Vérification du cache HuggingFace...'}
+            </span>
+            <span>
+              {progressInfo?.downloaded_mb && progressInfo?.total_mb
+                ? `${progressInfo.downloaded_mb} Mo / ${progressInfo.total_mb} Mo`
+                : `Taille estimée : ${selectedModelObj?.size_hint || '1.2 Go'}`}
+            </span>
+          </div>
+
+          <div style={{ marginTop: '4px', fontSize: '12px', color: '#1d4ed8', fontStyle: 'italic' }}>
+            {progressInfo?.stage_message || 'Téléchargement des poids PyTorch en cours...'}
           </div>
         </div>
       )}
