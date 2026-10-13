@@ -76,3 +76,12 @@ def test_load_real_model_endpoint():
     assert response.status_code == 200
     assert response.json()["model_id"] == DEFAULT_REAL_MOE_MODEL
     assert response.json()["is_real_model"] is True
+
+def test_get_prompts():
+    response = client.get("/api/prompts")
+    assert response.status_code == 200
+    prompts = response.json()
+    assert isinstance(prompts, list)
+    assert len(prompts) >= 2
+    assert any(p["id"] == "philosophie.md" for p in prompts)
+    assert any(p["id"] == "code.md" for p in prompts)
