@@ -47,29 +47,9 @@ def analyze_domain(domain_id: str):
 @app.post("/api/analyze-prompt")
 def analyze_prompt(payload: PromptAnalysisRequest):
     try:
-        import os
-        prompts_dir = "prompts"
-        # Check if the prompt is an id of a prompt file
-        if payload.prompt.endswith(".md"):
-            prompt_file = os.path.join(prompts_dir, payload.prompt)
-            if os.path.exists(prompt_file):
-                with open(prompt_file, "r", encoding="utf-8") as f:
-                    content = f.read()
-                return analyzer.analyze_prompt(content)
-
         return analyzer.analyze_prompt(payload.prompt)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-
-@app.get("/api/prompts")
-def get_prompts():
-    import os
-    prompts_dir = "prompts"
-    if not os.path.exists(prompts_dir):
-        return []
-
-    files = [f for f in os.listdir(prompts_dir) if f.endswith(".md")]
-    return [{"id": f, "name": f.replace(".md", "")} for f in files]
 
 @app.get("/api/model/info")
 def get_model_info():

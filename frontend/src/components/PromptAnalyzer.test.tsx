@@ -1,12 +1,7 @@
 import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/react';
+import { describe, it, expect, vi } from 'vitest';
 import { PromptAnalyzer } from './PromptAnalyzer';
-import * as api from '../api';
-
-vi.mock('../api', () => ({
-  fetchPrompts: vi.fn(),
-}));
 
 describe('PromptAnalyzer Component', () => {
   const mockDomains = {
@@ -14,15 +9,7 @@ describe('PromptAnalyzer Component', () => {
     mathematiques: 'Mathématiques & Logique',
   };
 
-  beforeEach(() => {
-    vi.clearAllMocks();
-    (api.fetchPrompts as any).mockResolvedValue([
-      { id: 'philosophie.md', name: 'philosophie' },
-      { id: 'code.md', name: 'code' },
-    ]);
-  });
-
-  it('submits custom prompt when form is submitted', async () => {
+  it('submits custom prompt when form is submitted', () => {
     const handleAnalyze = vi.fn();
     render(
       <PromptAnalyzer
@@ -32,19 +19,14 @@ describe('PromptAnalyzer Component', () => {
       />
     );
 
-    await waitFor(() => {
-      expect(screen.getByRole('combobox')).toBeInTheDocument();
-      expect(screen.getByRole('option', { name: 'code' })).toBeInTheDocument();
-    });
-
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'code.md' } });
+    const input = screen.getByLabelText(/Analyse sur Prompt Personnalisé/i);
+    fireEvent.change(input, { target: { value: 'Algorithme Python de tri' } });
     fireEvent.click(screen.getByRole('button', { name: /Analyser le Prompt/i }));
 
-    expect(handleAnalyze).toHaveBeenCalledWith('code.md');
+    expect(handleAnalyze).toHaveBeenCalledWith('Algorithme Python de tri');
   });
 
-  it('toggles data quality warning alert when prevention button is clicked', async () => {
+  it('toggles data quality warning alert when prevention button is clicked', () => {
     render(
       <PromptAnalyzer
         onAnalyzePrompt={vi.fn()}
