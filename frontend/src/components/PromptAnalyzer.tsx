@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DomainsMap, TokenRoutingInfo } from '../types';
+import { fetchPrompts, PromptOption } from '../api';
 
 interface PromptAnalyzerProps {
   onAnalyzePrompt: (prompt: string) => void;
@@ -10,12 +11,6 @@ interface PromptAnalyzerProps {
   isRealInference?: boolean;
 }
 
-const SAMPLE_PROMPTS = [
-  'Implémente un algorithme Python avec FastAPI pour diagonaliser une matrice',
-  'Quelle est la relation entre la conscience morale chez Kant et le libre arbitre ?',
-  'Explique l\'intrication quantique des particules et la structure de l\'ADN',
-];
-
 export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
   onAnalyzePrompt,
   loading,
@@ -24,13 +19,25 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
   tokenRouting,
   isRealInference,
 }) => {
-  const [promptText, setPromptText] = useState<string>('');
+  const [promptId, setPromptId] = useState<string>('');
+  const [prompts, setPrompts] = useState<PromptOption[]>([]);
   const [showWarning, setShowWarning] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetchPrompts().then(data => {
+      setPrompts(data);
+      if (data.length > 0) {
+        setPromptId(data[0].id);
+      }
+    }).catch(err => {
+      console.error(err);
+    });
+  }, []);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!promptText.trim()) return;
-    onAnalyzePrompt(promptText.trim());
+    if (!promptId.trim()) return;
+    onAnalyzePrompt(promptId.trim());
   };
 
   return (
@@ -84,12 +91,10 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
       )}
 
       <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <input
+        <select
           id="custom-prompt-input"
-          type="text"
-          value={promptText}
-          onChange={(e) => setPromptText(e.target.value)}
-          placeholder="Saisissez un prompt libre (ex: Écris un algorithme Python pour résoudre une équation différentielle)..."
+          value={promptId}
+          onChange={(e) => setPromptId(e.target.value)}
           style={{
             flex: 1,
             minWidth: '260px',
@@ -98,48 +103,27 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
             borderRadius: '6px',
             border: '1px solid #94a3b8',
           }}
-        />
+        >
+          {prompts.map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
         <button
           type="submit"
-          disabled={loading || !promptText.trim()}
+          disabled={loading || !promptId.trim() || prompts.length === 0}
           style={{
             padding: '9px 16px',
-            backgroundColor: loading || !promptText.trim() ? '#94a3b8' : '#2563eb',
+            backgroundColor: loading || !promptId.trim() || prompts.length === 0 ? '#94a3b8' : '#2563eb',
             color: '#ffffff',
             border: 'none',
             borderRadius: '6px',
             fontWeight: 'bold',
-            cursor: loading || !promptText.trim() ? 'not-allowed' : 'pointer',
+            cursor: loading || !promptId.trim() || prompts.length === 0 ? 'not-allowed' : 'pointer',
           }}
         >
           Analyser le Prompt
         </button>
       </form>
-
-      <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <span style={{ fontSize: '12px', color: '#64748b' }}>Exemples :</span>
-        {SAMPLE_PROMPTS.map((sample, idx) => (
-          <button
-            key={idx}
-            type="button"
-            onClick={() => {
-              setPromptText(sample);
-              onAnalyzePrompt(sample);
-            }}
-            style={{
-              fontSize: '12px',
-              padding: '4px 8px',
-              backgroundColor: '#e2e8f0',
-              color: '#334155',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            Exemple #{idx + 1}
-          </button>
-        ))}
-      </div>
 
       {detectedDomains && Object.keys(detectedDomains).length > 0 && (
         <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>

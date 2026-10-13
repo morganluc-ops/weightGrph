@@ -57,6 +57,19 @@ export async function loadMoEModel(modelId: string): Promise<ModelInfo> {
   return response.json();
 }
 
+export interface PromptOption {
+  id: string;
+  name: string;
+}
+
+export async function fetchPrompts(): Promise<PromptOption[]> {
+  const response = await fetch(`${API_BASE_URL}/prompts`);
+  if (!response.ok) {
+    throw new Error('Erreur lors du chargement des prompts');
+  }
+  return response.json();
+}
+
 export async function analyzeCustomPrompt(prompt: string): Promise<DomainAnalysisResult> {
   const response = await fetch(`${API_BASE_URL}/analyze-prompt`, {
     method: 'POST',
