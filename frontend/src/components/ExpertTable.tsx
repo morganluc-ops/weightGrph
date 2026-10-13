@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { DomainAnalysisResult } from '../types';
 
 interface ExpertTableProps {
@@ -7,6 +7,20 @@ interface ExpertTableProps {
 }
 
 export const ExpertTable: React.FC<ExpertTableProps> = ({ analysis, loading }) => {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    if (!analysis) return;
+    const jsonStr = JSON.stringify(analysis, null, 2);
+    const textToCopy = `Voici l'analyse des activations des experts MoE :\n${jsonStr}`;
+    navigator.clipboard.writeText(textToCopy).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }).catch((err) => {
+      console.error('Failed to copy: ', err);
+    });
+  };
+
   if (loading) {
     return <div data-testid="loading-spinner" style={{ padding: '20px' }}>Analyse des poids MoE en cours...</div>;
   }
@@ -17,9 +31,27 @@ export const ExpertTable: React.FC<ExpertTableProps> = ({ analysis, loading }) =
 
   return (
     <div style={{ marginTop: '20px', overflowX: 'auto' }}>
-      <h3 style={{ marginBottom: '10px' }}>
-        Répartition de l'utilisation des experts / poids pour : <span style={{ color: '#0066cc' }}>{analysis.domain_name}</span>
-      </h3>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+        <h3 style={{ margin: 0 }}>
+          Répartition de l'utilisation des experts / poids pour : <span style={{ color: '#0066cc' }}>{analysis.domain_name}</span>
+        </h3>
+        <button
+          onClick={handleCopy}
+          style={{
+            padding: '6px 12px',
+            backgroundColor: copied ? '#27ae60' : '#2980b9',
+            color: '#fff',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: 'pointer',
+            fontWeight: 'bold',
+            fontSize: '14px',
+            transition: 'background-color 0.2s',
+          }}
+        >
+          {copied ? '✅ Copié !' : '📋 Copy Analysis'}
+        </button>
+      </div>
       <table
         aria-label="Experts Table"
         style={{
