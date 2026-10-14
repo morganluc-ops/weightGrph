@@ -86,15 +86,15 @@ describe('TokenRoutingVisualizer Component', () => {
     expect(screen.getByText('76.2%')).toBeInTheDocument();
   });
 
-  it('switches MoE layers via dropdown without API call and updates dominant experts', () => {
+  it('switches MoE layers via layer badge buttons and updates dominant experts', () => {
     render(<TokenRoutingVisualizer tokenRouting={mockTokenRouting} numLayers={2} />);
 
-    const select = screen.getByTestId('layer-selector') as HTMLSelectElement;
-    expect(select.value).toBe('0');
+    // Initial state on layer 0
+    expect(screen.getByText('E2')).toBeInTheDocument();
 
-    // Switch to layer 1
-    fireEvent.change(select, { target: { value: '1' } });
-    expect(select.value).toBe('1');
+    // Click badge Couche 1
+    const tab1 = screen.getByTestId('layer-tab-1');
+    fireEvent.click(tab1);
 
     // On layer 1: token 'import' has expert 7 (92%), 'torch' has expert 3 (88.4%)
     expect(screen.getByText('E7')).toBeInTheDocument();

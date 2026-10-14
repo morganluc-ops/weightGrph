@@ -221,9 +221,9 @@ describe('PromptAnalyzer Component', () => {
     expect(screen.getByText('async')).toBeInTheDocument();
     expect(screen.getByText('E2')).toBeInTheDocument();
 
-    // Change layer to 1
-    const select = screen.getByTestId('layer-selector');
-    fireEvent.change(select, { target: { value: '1' } });
+    // Change layer to 1 via badge
+    const tab1 = screen.getByTestId('layer-tab-1');
+    fireEvent.click(tab1);
     expect(screen.getByText('E6')).toBeInTheDocument();
     expect(screen.getByText('94.5%')).toBeInTheDocument();
   });

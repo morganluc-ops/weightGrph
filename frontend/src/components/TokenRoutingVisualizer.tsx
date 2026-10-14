@@ -143,28 +143,6 @@ export const TokenRoutingVisualizer: React.FC<TokenRoutingVisualizerProps> = ({
               );
             })}
           </div>
-
-          <select
-            id="layer-selector"
-            data-testid="layer-selector"
-            aria-label="Sélectionner une couche"
-            value={selectedLayer}
-            onChange={(e) => setSelectedLayer(Number(e.target.value))}
-            style={{
-              display: totalLayers > 8 ? 'inline-block' : 'none',
-              padding: '4px 8px',
-              fontSize: '12px',
-              borderRadius: '6px',
-              border: '1px solid #94a3b8',
-              backgroundColor: '#ffffff',
-            }}
-          >
-            {layerOptions.map((layerIdx) => (
-              <option key={layerIdx} value={layerIdx}>
-                Couche {layerIdx}
-              </option>
-            ))}
-          </select>
         </div>
       </div>
 
