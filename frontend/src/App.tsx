@@ -5,6 +5,7 @@ import { MoENetworkGraph } from './components/MoENetworkGraph';
 import { PromptAnalyzer } from './components/PromptAnalyzer';
 import { ModelManager } from './components/ModelManager';
 import { RoutingMetricsCard } from './components/RoutingMetricsCard';
+import { LayerExpertHeatmap } from './components/LayerExpertHeatmap';
 import {
   fetchDomains,
   fetchDomainAnalysis,
@@ -171,6 +172,14 @@ export const App: React.FC = () => {
 
       {!loading && analysis && analysis.balance_metrics && (
         <RoutingMetricsCard balanceMetrics={analysis.balance_metrics} />
+      )}
+
+      {!loading && analysis && analysis.layer_expert_matrix && (
+        <LayerExpertHeatmap
+          analysis={analysis}
+          numLayers={modelInfo?.num_layers || analysis.layer_expert_matrix.length}
+          expertsPerLayer={modelInfo?.experts_per_layer || analysis.layer_expert_matrix[0]?.length}
+        />
       )}
 
       {!loading && analysis && (

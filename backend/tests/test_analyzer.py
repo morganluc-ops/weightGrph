@@ -7,6 +7,7 @@ from app.analyzer import (
     BalanceMetrics,
     LayerBalanceMetrics,
     compute_balance_metrics,
+    compute_layer_expert_matrix,
 )
 
 def test_moe_analyzer_initialization():
@@ -290,5 +291,80 @@ def test_analyzer_concurrency_lock():
 
     assert len(errors) == 0
     assert len(results) == 5
+
+
+def test_compute_layer_expert_matrix_uniform():
+    # 3 couches x 4 experts, répartition uniforme
+    scores = {(l, e): 2.5 for l in range(3) for e in range(4)}
+    matrix = compute_layer_expert_matrix(scores, num_layers=3, experts_per_layer=4)
+
+    assert len(matrix) == 3
+    for row in matrix:
+        assert len(row) == 4
+        assert row == [25.0, 25.0, 25.0, 25.0]
+        assert sum(row) == pytest.approx(100.0, abs=0.01)
+
+
+def test_compute_layer_expert_matrix_with_dead_and_active_experts():
+    scores = {
+        (0, 0): 10.0,
+        (1, 1): 3.0,
+        (1, 2): 7.0,
+    }
+    matrix = compute_layer_expert_matrix(scores, num_layers=2, experts_per_layer=4)
+
+    assert len(matrix) == 2
+    # Couche 0 : 100% sur expert 0
+    assert matrix[0] == [100.0, 0.0, 0.0, 0.0]
+    assert sum(matrix[0]) == 100.0
+
+    # Couche 1 : 30% sur expert 1, 70% sur expert 2
+    assert matrix[1] == [0.0, 30.0, 70.0, 0.0]
+    assert sum(matrix[1]) == 100.0
+
+
+def test_compute_layer_expert_matrix_edge_cases():
+    # 0 couches ou 0 experts
+    assert compute_layer_expert_matrix({}, num_layers=0, experts_per_layer=4) == []
+    assert compute_layer_expert_matrix({}, num_layers=4, experts_per_layer=0) == []
+
+    # Couche inactive (masse = 0)
+    zero_matrix = compute_layer_expert_matrix({}, num_layers=2, experts_per_layer=3)
+    assert len(zero_matrix) == 2
+    for row in zero_matrix:
+        assert row == [0.0, 0.0, 0.0]
+        assert sum(row) == 0.0
+
+
+def test_analyze_domain_and_prompt_contain_layer_expert_matrix():
+    analyzer = MoEAnalyzer()
+    info = analyzer.get_model_info()
+    num_layers = info["num_layers"]
+    experts_per_layer = info["experts_per_layer"]
+
+    # 1. Analyse par domaine
+    domain_res = analyzer.analyze_domain("philosophie")
+    assert domain_res.layer_expert_matrix is not None
+    matrix = domain_res.layer_expert_matrix
+
+    assert len(matrix) == num_layers
+    for row in matrix:
+        assert len(row) == experts_per_layer
+        assert sum(row) == pytest.approx(100.0, abs=0.5)
+        # Chaque valeur est un pourcentage valide entre 0 et 100
+        for val in row:
+            assert 0.0 <= val <= 100.0
+
+    # 2. Analyse par prompt personnalisé
+    prompt_res = analyzer.analyze_prompt("Écris un programme Python utilisant PyTorch et CUDA")
+    assert prompt_res.layer_expert_matrix is not None
+    p_matrix = prompt_res.layer_expert_matrix
+
+    assert len(p_matrix) == num_layers
+    for row in p_matrix:
+        assert len(row) == experts_per_layer
+        assert sum(row) == pytest.approx(100.0, abs=0.5)
+        for val in row:
+            assert 0.0 <= val <= 100.0
 
 

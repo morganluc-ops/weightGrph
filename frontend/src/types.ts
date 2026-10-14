@@ -40,6 +40,7 @@ export interface DomainAnalysisResult {
   model_id?: string;
   token_routing?: TokenRoutingInfo[];
   balance_metrics?: BalanceMetrics;
+  layer_expert_matrix?: number[][];
 }
 
 export interface DomainsMap {

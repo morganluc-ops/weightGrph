@@ -242,6 +242,32 @@ def compute_balance_metrics(
     )
 
 
+def compute_layer_expert_matrix(
+    expert_scores: Dict[tuple, float],
+    num_layers: int,
+    experts_per_layer: int,
+) -> List[List[float]]:
+    """
+    Calcule la matrice complète couche × expert de l'activation du routage MoE :
+    Pour chaque couche (de 0 à num_layers - 1), fournit la liste des activations
+    de chaque expert (de 0 à experts_per_layer - 1), normalisée par couche (la ligne somme à 100.0% ou 0.0),
+    arrondie à 2 décimales pour optimiser le payload JSON.
+    """
+    if num_layers <= 0 or experts_per_layer <= 0:
+        return []
+
+    matrix: List[List[float]] = []
+    for l in range(num_layers):
+        layer_masses = [expert_scores.get((l, e), 0.0) for e in range(experts_per_layer)]
+        tot_layer = sum(layer_masses)
+        if tot_layer > 0:
+            row = [round((m / tot_layer) * 100.0, 2) for m in layer_masses]
+        else:
+            row = [0.0] * experts_per_layer
+        matrix.append(row)
+    return matrix
+
+
 class DomainAnalysisResult(BaseModel):
     domain_id: str
     domain_name: str
@@ -251,6 +277,7 @@ class DomainAnalysisResult(BaseModel):
     model_id: str = DEFAULT_REAL_MOE_MODEL
     token_routing: Optional[List[TokenRoutingInfo]] = None
     balance_metrics: Optional[BalanceMetrics] = None
+    layer_expert_matrix: Optional[List[List[float]]] = None
 
 
 class PromptAnalysisRequest(BaseModel):
@@ -627,7 +654,7 @@ class MoEAnalyzer:
                 self.progress_state["stage_message"] = f"Erreur : {str(e)}"
                 raise ValueError(f"Impossible de charger le modèle MoE '{validated_id}': {str(e)}") from e
 
-    def _run_real_moe_inference(self, text: str) -> tuple[List[ExpertUsage], List[TokenRoutingInfo], BalanceMetrics]:
+    def _run_real_moe_inference(self, text: str) -> tuple[List[ExpertUsage], List[TokenRoutingInfo], BalanceMetrics, List[List[float]]]:
         with self._lock:
             inputs = self.hf_tokenizer(text, return_tensors="pt", truncation=True, max_length=128).to(self.hf_device)
             input_ids = inputs["input_ids"]
@@ -730,7 +757,8 @@ class MoEAnalyzer:
 
             experts_list.sort(key=lambda x: x.usage_percentage, reverse=True)
             balance_metrics = compute_balance_metrics(expert_scores, num_moe_layers, num_experts)
-            return experts_list[:16], token_routing[:32], balance_metrics
+            layer_expert_matrix = compute_layer_expert_matrix(expert_scores, num_moe_layers, num_experts)
+            return experts_list[:16], token_routing[:32], balance_metrics, layer_expert_matrix
 
     def analyze_domain(self, domain_id: str) -> DomainAnalysisResult:
         with self._lock:
@@ -738,7 +766,7 @@ class MoEAnalyzer:
                 raise ValueError(f"Domaine inconnu: {domain_id}")
 
             sample_text = self.domain_corpus[domain_id]
-            experts_models, token_routing, balance_metrics = self._run_real_moe_inference(sample_text)
+            experts_models, token_routing, balance_metrics, layer_expert_matrix = self._run_real_moe_inference(sample_text)
             return DomainAnalysisResult(
                 domain_id=domain_id,
                 domain_name=self.domains_info[domain_id],
@@ -747,6 +775,7 @@ class MoEAnalyzer:
                 model_id=self.current_model_id,
                 token_routing=token_routing,
                 balance_metrics=balance_metrics,
+                layer_expert_matrix=layer_expert_matrix,
             )
 
     def analyze_prompt(self, prompt: str) -> DomainAnalysisResult:
@@ -759,7 +788,7 @@ class MoEAnalyzer:
                     f"Le prompt dépasse la limite maximale autorisée de {MAX_PROMPT_LENGTH} caractères"
                 )
 
-            experts_models, token_routing, balance_metrics = self._run_real_moe_inference(prompt.strip())
+            experts_models, token_routing, balance_metrics, layer_expert_matrix = self._run_real_moe_inference(prompt.strip())
             short_prompt = prompt.strip()[:60] + ("..." if len(prompt.strip()) > 60 else "")
             return DomainAnalysisResult(
                 domain_id="custom_prompt",
@@ -769,4 +798,5 @@ class MoEAnalyzer:
                 model_id=self.current_model_id,
                 token_routing=token_routing,
                 balance_metrics=balance_metrics,
+                layer_expert_matrix=layer_expert_matrix,
             )
