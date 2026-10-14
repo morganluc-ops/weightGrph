@@ -100,3 +100,48 @@ export async function analyzeCustomPrompt(prompt: string): Promise<DomainAnalysi
   data.experts.sort((a, b) => b.usage_percentage - a.usage_percentage);
   return data;
 }
+
+export interface UploadModelResponse {
+  status: string;
+  model_id: string;
+  model_name: string;
+  model_path: string;
+  files_count: number;
+}
+
+export interface LocalModelOption {
+  id: string;
+  name: string;
+  path: string;
+  files_count: number;
+}
+
+export async function uploadLocalModel(files: FileList | File[]): Promise<UploadModelResponse> {
+  const formData = new FormData();
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const filename = (file as any).webkitRelativePath || file.name;
+    formData.append('files', file, filename);
+  }
+
+  const response = await fetch(`${API_BASE_URL}/models/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || "Échec de l'envoi des fichiers du modèle");
+  }
+
+  return response.json();
+}
+
+export async function fetchLocalModels(): Promise<LocalModelOption[]> {
+  const response = await fetch(`${API_BASE_URL}/models/local`);
+  if (!response.ok) {
+    throw new Error('Erreur lors du chargement des modèles locaux');
+  }
+  return response.json();
+}
+

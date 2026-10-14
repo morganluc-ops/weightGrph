@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MoEModelOption, ModelInfo, DownloadProgressInfo } from '../types';
-import { fetchModelProgress } from '../api';
+import { fetchModelProgress, uploadLocalModel } from '../api';
 
 interface ModelManagerProps {
   models: MoEModelOption[];
@@ -23,6 +23,9 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
   const [customHuggingFaceId, setCustomHuggingFaceId] = useState<string>('');
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [progressInfo, setProgressInfo] = useState<DownloadProgressInfo | null>(null);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
 
   useEffect(() => {
     if (currentModel?.model_id) {
@@ -70,6 +73,28 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
     }
   };
 
+  const folderInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFolderSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    try {
+      setIsUploading(true);
+      setUploadError(null);
+      const res = await uploadLocalModel(files);
+      setCustomHuggingFaceId(res.model_path);
+      onSelectModel(res.model_path);
+    } catch (err: any) {
+      setUploadError(err.message || "Erreur lors de l'envoi du dossier modèle au serveur");
+    } finally {
+      setIsUploading(false);
+      if (folderInputRef.current) {
+        folderInputRef.current.value = '';
+      }
+    }
+  };
+
   const selectedModelObj = models.find((m) => m.id === selectedId);
   const displayPercent = progressInfo?.progress_percent ?? (loadingModel ? 5 : 0);
 
@@ -88,18 +113,45 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
         <div style={{ fontWeight: 'bold', color: '#0f172a', fontSize: '15px' }}>
           ⚙️ Modèle MoE PyTorch Actif
         </div>
-        <span
-          style={{
-            padding: '4px 10px',
-            borderRadius: '12px',
-            fontSize: '12px',
-            fontWeight: 'bold',
-            backgroundColor: '#059669',
-            color: '#ffffff',
-          }}
-        >
-          🟢 {currentModel?.model_id || 'Modèle actif'} ({currentModel?.device?.toUpperCase() || 'CPU'}) — Inférence réelle
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span
+            data-testid="active-model-badge"
+            style={{
+              padding: '4px 10px',
+              borderRadius: '12px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              backgroundColor: '#059669',
+              color: '#ffffff',
+            }}
+          >
+            🟢 {currentModel?.model_id || 'Modèle actif'} ({currentModel?.device?.toUpperCase() || 'CPU'}) — Inférence réelle
+          </span>
+          <div
+            role="button"
+            tabIndex={0}
+            data-testid="model-help-tooltip"
+            aria-label="Aide sur les modèles MoE"
+            title="1. Placez les dossiers du modèle sur le serveur ou en local. 2. Entrez le chemin absolu vers le dossier (ex: /chemin/vers/le/modele) ou sélectionnez un dossier local."
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '22px',
+              height: '22px',
+              borderRadius: '50%',
+              backgroundColor: '#e2e8f0',
+              color: '#475569',
+              fontWeight: 'bold',
+              fontSize: '13px',
+              cursor: 'help',
+              userSelect: 'none',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            }}
+          >
+            ?
+          </div>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -114,7 +166,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
             borderRadius: '6px',
             border: '1px solid #10b981',
             backgroundColor: '#fff',
-            minWidth: '320px',
+            minWidth: '280px',
           }}
         >
           {models.map((m) => (
@@ -130,9 +182,10 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
           onChange={(e) => setCustomHuggingFaceId(e.target.value)}
           placeholder="Ou ID HuggingFace personnalisé / chemin local..."
           disabled={loadingModel}
+          data-testid="custom-model-input"
           style={{
             flex: 1,
-            minWidth: '260px',
+            minWidth: '240px',
             padding: '8px 12px',
             fontSize: '13px',
             borderRadius: '6px',
@@ -140,44 +193,99 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
           }}
         />
 
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-          <div
-            title="1. Placez les dossiers du modèle sur le serveur. 2. Entrez le chemin absolu vers le dossier (ex: /chemin/vers/le/modele)."
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              width: '24px',
-              height: '24px',
-              borderRadius: '50%',
-              backgroundColor: '#e2e8f0',
-              color: '#475569',
-              fontWeight: 'bold',
-              fontSize: '14px',
-              cursor: 'help',
-            }}
-          >
-            ?
-          </div>
-        </div>
+        <input
+          ref={folderInputRef}
+          type="file"
+          // @ts-expect-error webkitdirectory is supported by Chromium/WebKit browsers
+          webkitdirectory=""
+          directory=""
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFolderSelect}
+          data-testid="local-folder-input"
+        />
+
+        <button
+          type="button"
+          onClick={() => folderInputRef.current?.click()}
+          disabled={loadingModel || isUploading}
+          title="Sélectionner un dossier local contenant les poids du modèle MoE (upload vers le serveur)"
+          aria-label="Sélectionner un dossier local"
+          data-testid="browse-folder-button"
+          style={{
+            padding: '8px 12px',
+            backgroundColor: '#f8fafc',
+            color: '#334155',
+            border: '1px solid #cbd5e1',
+            borderRadius: '6px',
+            fontSize: '13px',
+            fontWeight: 500,
+            cursor: loadingModel || isUploading ? 'not-allowed' : 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {isUploading ? '📤 Envoi en cours...' : '📁 Parcourir dossier...'}
+        </button>
 
         <button
           type="button"
           onClick={handleLoadSelected}
-          disabled={loadingModel}
+          disabled={loadingModel || isUploading}
+          data-testid="load-model-button"
           style={{
             padding: '8px 18px',
-            backgroundColor: loadingModel ? '#94a3b8' : '#0f766e',
+            backgroundColor: loadingModel || isUploading ? '#94a3b8' : '#0f766e',
             color: '#fff',
             border: 'none',
             borderRadius: '6px',
             fontWeight: 'bold',
-            cursor: loadingModel ? 'wait' : 'pointer',
+            cursor: loadingModel || isUploading ? 'wait' : 'pointer',
+            whiteSpace: 'nowrap',
           }}
         >
           {loadingModel ? '⏳ Téléchargement en cours...' : 'Charger le Modèle MoE'}
         </button>
       </div>
+
+      {isUploading && (
+        <div
+          role="status"
+          data-testid="upload-status"
+          style={{
+            marginTop: '10px',
+            padding: '10px 14px',
+            backgroundColor: '#eff6ff',
+            border: '1px solid #3b82f6',
+            borderRadius: '6px',
+            color: '#1d4ed8',
+            fontSize: '13px',
+            fontWeight: 500,
+          }}
+        >
+          📤 Transfert des fichiers du modèle vers le serveur en cours...
+        </div>
+      )}
+
+      {uploadError && (
+        <div
+          role="alert"
+          data-testid="upload-error"
+          style={{
+            marginTop: '10px',
+            padding: '10px 14px',
+            backgroundColor: '#fef2f2',
+            border: '1px solid #ef4444',
+            borderRadius: '6px',
+            color: '#b91c1c',
+            fontSize: '13px',
+          }}
+        >
+          ⚠️ {uploadError}
+        </div>
+      )}
 
       {loadingModel && (
         <div
