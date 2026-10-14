@@ -35,7 +35,12 @@ def test_analyze_domain():
     assert "total_experts" in bm
     assert "max_expert_load_share" in bm
     assert "layers_metrics" in bm
-    assert len(bm["layers_metrics"]) == 4
+    assert "layer_expert_matrix" in data
+    matrix = data["layer_expert_matrix"]
+    assert len(matrix) == 4
+    for row in matrix:
+        assert len(row) == 8
+        assert sum(row) == pytest.approx(100.0, abs=0.5)
 
     experts = data["experts"]
     for i in range(len(experts) - 1):
@@ -65,6 +70,12 @@ def test_analyze_prompt_endpoint():
     assert "balance_metrics" in data
     assert data["balance_metrics"]["total_experts"] == 32
     assert 0.0 <= data["balance_metrics"]["entropy"] <= 1.0
+    assert "layer_expert_matrix" in data
+    matrix = data["layer_expert_matrix"]
+    assert len(matrix) == 4
+    for row in matrix:
+        assert len(row) == 8
+        assert sum(row) == pytest.approx(100.0, abs=0.5)
 
 def test_analyze_empty_prompt_endpoint():
     response = client.post("/api/analyze-prompt", json={"prompt": ""})
