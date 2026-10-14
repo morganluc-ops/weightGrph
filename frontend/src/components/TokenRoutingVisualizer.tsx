@@ -105,26 +105,58 @@ export const TokenRoutingVisualizer: React.FC<TokenRoutingVisualizerProps> = ({
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <label
-            htmlFor="layer-selector"
-            style={{ fontSize: '12px', fontWeight: 'bold', color: '#334155' }}
+          <div
+            data-testid="layer-tabs"
+            style={{
+              display: 'flex',
+              gap: '6px',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+            }}
           >
-            Couche MoE :
-          </label>
+            <span style={{ fontSize: '12px', fontWeight: 'bold', color: '#475569', marginRight: '4px' }}>
+              Couche :
+            </span>
+            {layerOptions.map((layerIdx) => {
+              const isSelected = selectedLayer === layerIdx;
+              return (
+                <button
+                  key={layerIdx}
+                  type="button"
+                  data-testid={`layer-tab-${layerIdx}`}
+                  onClick={() => setSelectedLayer(layerIdx)}
+                  style={{
+                    padding: '4px 12px',
+                    fontSize: '12px',
+                    fontWeight: isSelected ? 'bold' : '500',
+                    borderRadius: '6px',
+                    border: isSelected ? '1px solid #2563eb' : '1px solid #cbd5e1',
+                    backgroundColor: isSelected ? '#2563eb' : '#ffffff',
+                    color: isSelected ? '#ffffff' : '#334155',
+                    cursor: 'pointer',
+                    boxShadow: isSelected ? '0 1px 3px rgba(37,99,235,0.3)' : 'none',
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  Couche {layerIdx}
+                </button>
+              );
+            })}
+          </div>
+
           <select
             id="layer-selector"
             data-testid="layer-selector"
+            aria-label="Sélectionner une couche"
             value={selectedLayer}
             onChange={(e) => setSelectedLayer(Number(e.target.value))}
             style={{
-              padding: '5px 10px',
-              fontSize: '13px',
-              fontWeight: 'bold',
+              display: totalLayers > 8 ? 'inline-block' : 'none',
+              padding: '4px 8px',
+              fontSize: '12px',
               borderRadius: '6px',
               border: '1px solid #94a3b8',
               backgroundColor: '#ffffff',
-              color: '#0f172a',
-              cursor: 'pointer',
             }}
           >
             {layerOptions.map((layerIdx) => (
@@ -135,44 +167,6 @@ export const TokenRoutingVisualizer: React.FC<TokenRoutingVisualizerProps> = ({
           </select>
         </div>
       </div>
-
-      {/* Onglets rapides de sélection de couche pour une navigation fluide */}
-      {totalLayers > 1 && totalLayers <= 12 && (
-        <div
-          data-testid="layer-tabs"
-          style={{
-            display: 'flex',
-            gap: '4px',
-            marginBottom: '14px',
-            flexWrap: 'wrap',
-          }}
-        >
-          {layerOptions.map((layerIdx) => {
-            const isSelected = selectedLayer === layerIdx;
-            return (
-              <button
-                key={layerIdx}
-                type="button"
-                data-testid={`layer-tab-${layerIdx}`}
-                onClick={() => setSelectedLayer(layerIdx)}
-                style={{
-                  padding: '4px 10px',
-                  fontSize: '12px',
-                  fontWeight: isSelected ? 'bold' : 'normal',
-                  borderRadius: '4px',
-                  border: isSelected ? '1px solid #2563eb' : '1px solid #cbd5e1',
-                  backgroundColor: isSelected ? '#2563eb' : '#ffffff',
-                  color: isSelected ? '#ffffff' : '#475569',
-                  cursor: 'pointer',
-                  transition: 'all 0.15s ease',
-                }}
-              >
-                Couche {layerIdx}
-              </button>
-            );
-          })}
-        </div>
-      )}
 
       {/* 3. Affichage interactif des tokens */}
       <div
