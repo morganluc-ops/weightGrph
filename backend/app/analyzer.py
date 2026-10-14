@@ -311,16 +311,16 @@ class MoEAnalyzer:
         progress_ref["stage_message"] = "Montage des tenseurs et allocation VRAM/RAM..."
 
         try:
-            config = AutoConfig.from_pretrained(model_id)
-            tokenizer = AutoTokenizer.from_pretrained(model_id)
+            config = AutoConfig.from_pretrained(model_id, trust_remote_code=False)
+            tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=False)
 
             device = "cuda" if torch.cuda.is_available() else "cpu"
             dtype = torch.float16 if device == "cuda" else torch.float32
 
             if getattr(config, "is_encoder_decoder", False) or "switch" in getattr(config, "model_type", "").lower():
-                model = AutoModelForSeq2SeqLM.from_pretrained(model_id, torch_dtype=dtype)
+                model = AutoModelForSeq2SeqLM.from_pretrained(model_id, torch_dtype=dtype, trust_remote_code=False)
             else:
-                model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype)
+                model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype, trust_remote_code=False)
 
             model.to(device)
             model.eval()

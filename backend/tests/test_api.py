@@ -165,4 +165,82 @@ def test_upload_model_disallowed_extension_rejected():
     assert response.status_code == 400
     assert "Extension non autorisée" in response.json()["detail"]
 
+def test_upload_model_pickle_extensions_rejected():
+    # .bin, .pt, and .pth must be strictly rejected due to pickle remote code execution risks
+    for ext in [".bin", ".pt", ".pth"]:
+        files = [
+            ("files", (f"model-pickle/weights{ext}", b'pickle-bytes', "application/octet-stream")),
+        ]
+        response = client.post("/api/models/upload", files=files)
+        assert response.status_code == 400
+        assert "Extension non autorisée" in response.json()["detail"]
+        assert ".safetensors" in response.json()["detail"]
+
+def test_upload_model_duplicate_conflict_409():
+    import shutil
+    from app.main import MODELS_DIR
+
+    model_dir = MODELS_DIR / "dup-test-moe"
+    try:
+        files = [
+            ("files", ("dup-test-moe/config.json", b'{"model_type": "moe"}', "application/json")),
+            ("files", ("dup-test-moe/model.safetensors", b'fake-weights', "application/octet-stream")),
+        ]
+        # First upload: success
+        res1 = client.post("/api/models/upload", files=files)
+        assert res1.status_code == 200
+
+        # Second upload with same model directory: 409 Conflict
+        res2 = client.post("/api/models/upload", files=files)
+        assert res2.status_code == 409
+        assert "existe déjà" in res2.json()["detail"]
+    finally:
+        if model_dir.exists():
+            shutil.rmtree(model_dir, ignore_errors=True)
+
+def test_upload_model_multiple_roots_rejected_400():
+    files = [
+        ("files", ("model-alpha/config.json", b'{"model_type": "moe"}', "application/json")),
+        ("files", ("model-beta/config.json", b'{"model_type": "moe"}', "application/json")),
+    ]
+    response = client.post("/api/models/upload", files=files)
+    assert response.status_code == 400
+    assert "même dossier racine" in response.json()["detail"]
+
+def test_upload_model_atomic_validation_no_residue():
+    from app.main import MODELS_DIR
+
+    target_dir = MODELS_DIR / "failing-model"
+    # Second file has an invalid extension (.bin), so validation fails before writing anything
+    files = [
+        ("files", ("failing-model/config.json", b'{"model_type": "moe"}', "application/json")),
+        ("files", ("failing-model/weights.bin", b'evil', "application/octet-stream")),
+    ]
+    response = client.post("/api/models/upload", files=files)
+    assert response.status_code == 400
+    assert not target_dir.exists()
+
+def test_upload_model_payload_too_large_413(monkeypatch):
+    import app.main as main_mod
+    from app.main import MODELS_DIR
+
+    # Temporarily set max file size to 10 bytes to trigger 413
+    monkeypatch.setattr(main_mod, "MAX_UPLOAD_FILE_SIZE", 10)
+
+    target_dir = MODELS_DIR / "large-model"
+    try:
+        files = [
+            ("files", ("large-model/config.json", b'12345678901234567890', "application/json")),
+        ]
+        response = client.post("/api/models/upload", files=files)
+        assert response.status_code == 413
+        assert "trop volumineux" in response.json()["detail"]
+        # Ensure rollback was performed and no directory remains
+        assert not target_dir.exists()
+    finally:
+        if target_dir.exists():
+            import shutil
+            shutil.rmtree(target_dir, ignore_errors=True)
+
+
 

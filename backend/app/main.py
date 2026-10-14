@@ -10,10 +10,17 @@ MODELS_DIR = (Path(__file__).resolve().parent.parent / "models").resolve()
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
 ALLOWED_MODEL_EXTENSIONS = {
-    ".json", ".safetensors", ".bin", ".pt", ".pth", ".txt",
-    ".model", ".tiktoken", ".yaml", ".yml"
+    ".safetensors",
+    ".json",
+    ".txt",
+    ".model",
+    ".tiktoken",
+    ".yaml",
+    ".yml",
 }
+MAX_UPLOAD_FILES_COUNT = 500
 MAX_UPLOAD_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 Go max per file
+MAX_UPLOAD_TOTAL_SIZE = 10 * 1024 * 1024 * 1024  # 10 Go max total per batch
 
 app = FastAPI(title="MoE Weight & Expert Analyzer API", version="2.0.0")
 
@@ -117,8 +124,15 @@ def upload_model_files(files: List[UploadFile] = File(...)):
     if not files:
         raise HTTPException(status_code=400, detail="Aucun fichier fourni")
 
-    model_root_dir = None
-    model_name = None
+    if len(files) > MAX_UPLOAD_FILES_COUNT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Nombre de fichiers trop élevé: {len(files)} (maximum autorisé: {MAX_UPLOAD_FILES_COUNT})"
+        )
+
+    # 1. Validation préalable complète (tout-ou-rien) de TOUS les fichiers avant la moindre écriture
+    validated_files: List[tuple[UploadFile, List[str], Path]] = []
+    common_root_name = None
 
     for file in files:
         raw_name = file.filename or ""
@@ -133,30 +147,34 @@ def upload_model_files(files: List[UploadFile] = File(...)):
 
         # Séparer les segments
         parts = [p for p in clean_name.split("/") if p and p != "."]
+        if not parts:
+            raise HTTPException(status_code=400, detail="Chemin de fichier vide")
 
         # Rejeter le path traversal
         if any(p == ".." for p in parts):
             raise HTTPException(status_code=400, detail=f"Path traversal ('..') interdit: {clean_name}")
 
-        # Vérifier l'extension
+        # Vérifier l'extension (seul .safetensors et configs autorisés, pickle .bin/.pt/.pth strictement interdit)
         suffix = Path(parts[-1]).suffix.lower()
         if suffix not in ALLOWED_MODEL_EXTENSIONS:
             raise HTTPException(
                 status_code=400,
-                detail=f"Extension non autorisée pour le fichier '{parts[-1]}': {suffix}. Extensions autorisées: {sorted(list(ALLOWED_MODEL_EXTENSIONS))}"
+                detail=(
+                    f"Extension non autorisée pour '{parts[-1]}': '{suffix}'. "
+                    f"Seul le format sécurisé .safetensors et les configurations sont autorisés (.bin/.pt/.pth interdits). "
+                    f"Extensions autorisées: {sorted(list(ALLOWED_MODEL_EXTENSIONS))}"
+                )
             )
 
-        # Déterminer le dossier racine du modèle
-        if len(parts) > 1:
-            current_model_name = parts[0]
-            current_model_dir = (MODELS_DIR / current_model_name).resolve()
-        else:
-            current_model_name = Path(parts[0]).stem
-            current_model_dir = (MODELS_DIR / current_model_name).resolve()
-
-        if model_root_dir is None:
-            model_root_dir = current_model_dir
-            model_name = current_model_name
+        # Déterminer et valider la racine commune (un seul dossier racine par envoi)
+        root_name = parts[0] if len(parts) > 1 else Path(parts[0]).stem
+        if common_root_name is None:
+            common_root_name = root_name
+        elif root_name != common_root_name:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Tous les fichiers doivent appartenir à un même dossier racine de modèle. Racines détectées: '{common_root_name}' et '{root_name}'"
+            )
 
         dest_path = (MODELS_DIR / Path(*parts)).resolve()
 
@@ -166,25 +184,56 @@ def upload_model_files(files: List[UploadFile] = File(...)):
         except ValueError:
             raise HTTPException(status_code=400, detail="Accès non autorisé en dehors du dossier models")
 
-        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        validated_files.append((file, parts, dest_path))
 
-        size = 0
-        with open(dest_path, "wb") as f_out:
-            while chunk := file.file.read(1024 * 1024):
-                size += len(chunk)
-                if size > MAX_UPLOAD_FILE_SIZE:
-                    dest_path.unlink(missing_ok=True)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Fichier trop volumineux: {parts[-1]} (limite max: 2 Go)"
-                    )
-                f_out.write(chunk)
+    # 2. Vérifier si le modèle existe déjà -> 409 Conflict
+    target_model_dir = (MODELS_DIR / common_root_name).resolve()
+    if target_model_dir.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Le modèle '{common_root_name}' existe déjà sur le serveur"
+        )
+
+    # 3. Écriture atomique avec rollback complet en cas d'erreur
+    total_size = 0
+    created_dir = False
+    try:
+        target_model_dir.mkdir(parents=True, exist_ok=False)
+        created_dir = True
+
+        for file, parts, dest_path in validated_files:
+            dest_path.parent.mkdir(parents=True, exist_ok=True)
+            file_size = 0
+            with open(dest_path, "wb") as f_out:
+                while chunk := file.file.read(1024 * 1024):
+                    chunk_len = len(chunk)
+                    file_size += chunk_len
+                    total_size += chunk_len
+
+                    if file_size > MAX_UPLOAD_FILE_SIZE:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"Fichier trop volumineux: {parts[-1]} (taille max: 2 Go)"
+                        )
+                    if total_size > MAX_UPLOAD_TOTAL_SIZE:
+                        raise HTTPException(
+                            status_code=413,
+                            detail=f"Taille totale du lot trop volumineuse (taille max cumulée: 10 Go)"
+                        )
+                    f_out.write(chunk)
+    except Exception:
+        # En cas d'erreur à n'importe quel moment de l'écriture : rollback complet
+        if created_dir and target_model_dir.exists():
+            import shutil
+            shutil.rmtree(target_model_dir, ignore_errors=True)
+        raise
 
     return {
         "status": "success",
-        "model_id": str(model_root_dir),
-        "model_name": model_name,
-        "model_path": str(model_root_dir),
-        "files_count": len(files),
+        "model_id": str(target_model_dir),
+        "model_name": common_root_name,
+        "model_path": str(target_model_dir),
+        "files_count": len(validated_files),
     }
+
 
