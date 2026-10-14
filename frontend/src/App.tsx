@@ -222,6 +222,10 @@ export const App: React.FC = () => {
             domainsMap={domains}
             tokenRouting={analysis?.token_routing}
             isRealInference={analysis?.is_real_inference}
+            truncated={analysis?.truncated}
+            originalTokenCount={analysis?.original_token_count}
+            analyzedTokenCount={analysis?.analyzed_token_count}
+            numLayers={modelInfo?.num_layers || analysis?.layer_expert_matrix?.length || 4}
           />
 
           {loading && !analysis && (

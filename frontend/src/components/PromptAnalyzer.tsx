@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { DomainsMap, TokenRoutingInfo } from '../types';
 import { fetchPrompts, uploadPromptFile, PromptOption } from '../api';
+import { TokenRoutingVisualizer } from './TokenRoutingVisualizer';
 
 interface PromptAnalyzerProps {
   onAnalyzePrompt: (prompt: string) => void;
@@ -9,6 +10,10 @@ interface PromptAnalyzerProps {
   domainsMap: DomainsMap;
   tokenRouting?: TokenRoutingInfo[];
   isRealInference?: boolean;
+  truncated?: boolean;
+  originalTokenCount?: number;
+  analyzedTokenCount?: number;
+  numLayers?: number;
 }
 
 export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
@@ -18,6 +23,10 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
   domainsMap,
   tokenRouting,
   isRealInference,
+  truncated,
+  originalTokenCount,
+  analyzedTokenCount,
+  numLayers,
 }) => {
   const [selectedPromptId, setSelectedPromptId] = useState<string>('');
   const [prompts, setPrompts] = useState<PromptOption[]>([]);
@@ -231,31 +240,14 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
         </div>
       )}
 
-      {tokenRouting && tokenRouting.length > 0 && (
-        <div style={{ marginTop: '12px', paddingTop: '10px', borderTop: '1px dashed #cbd5e1' }}>
-          <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#334155', marginBottom: '6px' }}>
-            🔬 Routage Gating Network par Token (Couche 0 {isRealInference ? '— Tenseur PyTorch réel' : '— Simulation Top-K'}) :
-          </div>
-          <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-            {tokenRouting.map((tr, i) => (
-              <span
-                key={`${tr.token}-${i}`}
-                style={{
-                  fontSize: '11px',
-                  padding: '3px 7px',
-                  backgroundColor: '#0f172a',
-                  color: '#f8fafc',
-                  borderRadius: '4px',
-                  fontFamily: 'monospace',
-                }}
-              >
-                {tr.token} <span style={{ color: '#38bdf8' }}>→ E{tr.expert_id}</span>{' '}
-                <span style={{ color: '#34d399' }}>({tr.confidence}%)</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
+      <TokenRoutingVisualizer
+        tokenRouting={tokenRouting}
+        numLayers={numLayers}
+        truncated={truncated}
+        originalTokenCount={originalTokenCount}
+        analyzedTokenCount={analyzedTokenCount}
+        isRealInference={isRealInference}
+      />
     </div>
   );
 };

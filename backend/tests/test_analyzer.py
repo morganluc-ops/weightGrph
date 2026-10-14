@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from app.analyzer import (
     MoEAnalyzer,
     DomainAnalysisResult,
@@ -371,6 +371,63 @@ def test_analyze_domain_and_prompt_contain_layer_expert_matrix():
             assert 0.0 <= val <= 100.0
 
 
+def test_token_routing_all_layers_structure():
+    analyzer = MoEAnalyzer()
+    info = analyzer.get_model_info()
+    num_layers = info["num_layers"]
+    active_k = info["active_experts_per_tok"]
+
+    res = analyzer.analyze_prompt("Le routage MoE sélectionne des experts spécifiques pour chaque token.")
+    assert res.token_routing is not None
+    assert len(res.token_routing) > 0
+
+    for tok_info in res.token_routing:
+        assert tok_info.token
+        assert tok_info.layers is not None
+        assert len(tok_info.layers) == num_layers
+
+        for l_idx, layer_routing in enumerate(tok_info.layers):
+            assert layer_routing.layer_id == l_idx
+            assert 0 <= layer_routing.expert_id < info["experts_per_layer"]
+            assert layer_routing.confidence > 0.0
+            assert len(layer_routing.top_k) == active_k
+            assert layer_routing.top_k[0].expert_id == layer_routing.expert_id
+            assert layer_routing.top_k[0].weight == layer_routing.confidence
+
+            # Vérifier l'ordre décroissant des probabilités du top-k
+            for k_idx in range(len(layer_routing.top_k) - 1):
+                assert layer_routing.top_k[k_idx].weight >= layer_routing.top_k[k_idx + 1].weight
+
+
+def test_token_routing_truncation_detection():
+    analyzer = MoEAnalyzer()
+
+    # Prompt court (< 128 tokens)
+    short_text = "Ceci est un court texte d'évaluation."
+    short_res = analyzer.analyze_prompt(short_text)
+    assert short_res.truncated is False
+    assert short_res.original_token_count == short_res.analyzed_token_count
+    assert len(short_res.token_routing) == short_res.analyzed_token_count
+    assert short_res.analyzed_token_count < 128
+
+    # Prompt long (> 128 tokens)
+    long_text = "L'intelligence artificielle quantique et les réseaux de neurones profonds Mixture of Experts " * 30
+    long_res = analyzer.analyze_prompt(long_text)
+    assert long_res.truncated is True
+    assert long_res.original_token_count > 128
+    assert long_res.analyzed_token_count == 128
+    assert len(long_res.token_routing) == 128
+
+
+def test_token_routing_lifts_32_limit():
+    analyzer = MoEAnalyzer()
+    # Prompt ayant environ 50-60 tokens (dépassant 32 mais inférieur à 128)
+    medium_text = "Dans un modèle MoE moderne, chaque couche de feed-forward possède de multiples experts spécialisés et un réseau de gating route les tokens vers le top-k le plus approprié pour optimiser le calcul."
+    res = analyzer.analyze_prompt(medium_text)
+    assert res.token_routing is not None
+    assert len(res.token_routing) > 32
+    assert len(res.token_routing) <= 128
+    assert res.truncated is False
 def test_compute_jsd_identical_distributions():
     dist = [10.0, 20.0, 30.0, 40.0]
     assert compute_jsd(dist, dist) == 0.0

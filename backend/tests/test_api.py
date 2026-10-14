@@ -1,4 +1,4 @@
-import io
+﻿import io
 from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
@@ -494,6 +494,41 @@ def test_cors_wildcard_logic():
         assert allow_cred is False
 
 
+def test_analyze_prompt_returns_token_routing_all_layers_and_truncation():
+    response = client.post(
+        "/api/analyze-prompt",
+        json={"prompt": "Recherche opérationnelle et optimisation combinatoire sous contraintes."},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "truncated" in data
+    assert "original_token_count" in data
+    assert "analyzed_token_count" in data
+    assert data["truncated"] is False
+    assert data["original_token_count"] == data["analyzed_token_count"]
+
+    assert "token_routing" in data
+    assert len(data["token_routing"]) > 0
+    first_tok = data["token_routing"][0]
+    assert "token" in first_tok
+    assert "layers" in first_tok
+    assert len(first_tok["layers"]) > 0
+    assert "top_k" in first_tok["layers"][0]
+    assert len(first_tok["layers"][0]["top_k"]) > 0
+
+
+def test_analyze_prompt_truncation_flag_on_long_input():
+    long_prompt = "Tokenisation et routage d'un très long prompt MoE pour tester la troncature automatique. " * 25
+    response = client.post(
+        "/api/analyze-prompt",
+        json={"prompt": long_prompt},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["truncated"] is True
+    assert data["original_token_count"] > 128
+    assert data["analyzed_token_count"] == 128
+    assert len(data["token_routing"]) == 128
 def test_compare_prompts_endpoint_success_with_md_and_domain():
     response = client.post(
         "/api/compare-prompts",
