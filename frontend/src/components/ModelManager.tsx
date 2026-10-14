@@ -70,6 +70,50 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
     }
   };
 
+  const folderInputRef = React.useRef<HTMLInputElement>(null);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+
+  const handleFolderSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const first = files[0];
+    const fileWithPath = first as File & { path?: string };
+
+    if (fileWithPath.path) {
+      const fullPath = fileWithPath.path;
+      if (first.webkitRelativePath) {
+        const relParts = first.webkitRelativePath.split('/');
+        const rootDirName = relParts[0];
+        const normalized = fullPath.replace(/\\/g, '/');
+        const rootIndex = normalized.lastIndexOf(rootDirName);
+        if (rootIndex !== -1) {
+          setCustomHuggingFaceId(fullPath.substring(0, rootIndex + rootDirName.length));
+          return;
+        }
+      }
+      setCustomHuggingFaceId(fullPath);
+    } else if (first.webkitRelativePath) {
+      const folderName = first.webkitRelativePath.split('/')[0];
+      setCustomHuggingFaceId(folderName);
+    } else if (first.name) {
+      setCustomHuggingFaceId(first.name);
+    }
+  };
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = event.target.files;
+    if (!files || files.length === 0) return;
+
+    const first = files[0];
+    const fileWithPath = first as File & { path?: string };
+    if (fileWithPath.path) {
+      setCustomHuggingFaceId(fileWithPath.path);
+    } else {
+      setCustomHuggingFaceId(first.name);
+    }
+  };
+
   const selectedModelObj = models.find((m) => m.id === selectedId);
   const displayPercent = progressInfo?.progress_percent ?? (loadingModel ? 5 : 0);
 
@@ -88,18 +132,45 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
         <div style={{ fontWeight: 'bold', color: '#0f172a', fontSize: '15px' }}>
           ⚙️ Modèle MoE PyTorch Actif
         </div>
-        <span
-          style={{
-            padding: '4px 10px',
-            borderRadius: '12px',
-            fontSize: '12px',
-            fontWeight: 'bold',
-            backgroundColor: '#059669',
-            color: '#ffffff',
-          }}
-        >
-          🟢 {currentModel?.model_id || 'Modèle actif'} ({currentModel?.device?.toUpperCase() || 'CPU'}) — Inférence réelle
-        </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+          <span
+            data-testid="active-model-badge"
+            style={{
+              padding: '4px 10px',
+              borderRadius: '12px',
+              fontSize: '12px',
+              fontWeight: 'bold',
+              backgroundColor: '#059669',
+              color: '#ffffff',
+            }}
+          >
+            🟢 {currentModel?.model_id || 'Modèle actif'} ({currentModel?.device?.toUpperCase() || 'CPU'}) — Inférence réelle
+          </span>
+          <div
+            role="button"
+            tabIndex={0}
+            data-testid="model-help-tooltip"
+            aria-label="Aide sur les modèles MoE"
+            title="1. Placez les dossiers du modèle sur le serveur ou en local. 2. Entrez le chemin absolu vers le dossier (ex: /chemin/vers/le/modele) ou sélectionnez un dossier local."
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '22px',
+              height: '22px',
+              borderRadius: '50%',
+              backgroundColor: '#e2e8f0',
+              color: '#475569',
+              fontWeight: 'bold',
+              fontSize: '13px',
+              cursor: 'help',
+              userSelect: 'none',
+              boxShadow: '0 1px 2px rgba(0,0,0,0.05)',
+            }}
+          >
+            ?
+          </div>
+        </div>
       </div>
 
       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -114,7 +185,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
             borderRadius: '6px',
             border: '1px solid #10b981',
             backgroundColor: '#fff',
-            minWidth: '320px',
+            minWidth: '280px',
           }}
         >
           {models.map((m) => (
@@ -130,9 +201,10 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
           onChange={(e) => setCustomHuggingFaceId(e.target.value)}
           placeholder="Ou ID HuggingFace personnalisé / chemin local..."
           disabled={loadingModel}
+          data-testid="custom-model-input"
           style={{
             flex: 1,
-            minWidth: '260px',
+            minWidth: '240px',
             padding: '8px 12px',
             fontSize: '13px',
             borderRadius: '6px',
@@ -140,31 +212,82 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
           }}
         />
 
-        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
-          <div
-            title="1. Placez les dossiers du modèle sur le serveur. 2. Entrez le chemin absolu vers le dossier (ex: /chemin/vers/le/modele)."
+        <input
+          ref={folderInputRef}
+          type="file"
+          // @ts-expect-error webkitdirectory is supported by Chromium/WebKit browsers
+          webkitdirectory=""
+          directory=""
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleFolderSelect}
+          data-testid="local-folder-input"
+        />
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          style={{ display: 'none' }}
+          onChange={handleFileSelect}
+          data-testid="local-file-input"
+        />
+
+        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => folderInputRef.current?.click()}
+            disabled={loadingModel}
+            title="Sélectionner un dossier local contenant les poids du modèle MoE"
+            aria-label="Sélectionner un dossier local"
+            data-testid="browse-folder-button"
             style={{
-              display: 'flex',
+              padding: '8px 12px',
+              backgroundColor: '#f8fafc',
+              color: '#334155',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              fontSize: '13px',
+              fontWeight: 500,
+              cursor: loadingModel ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
               alignItems: 'center',
-              justifyContent: 'center',
-              width: '24px',
-              height: '24px',
-              borderRadius: '50%',
-              backgroundColor: '#e2e8f0',
-              color: '#475569',
-              fontWeight: 'bold',
-              fontSize: '14px',
-              cursor: 'help',
+              gap: '6px',
+              whiteSpace: 'nowrap',
             }}
           >
-            ?
-          </div>
+            📁 Parcourir dossier...
+          </button>
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={loadingModel}
+            title="Sélectionner un fichier local (.safetensors, .pt, .json)"
+            aria-label="Sélectionner un fichier local"
+            data-testid="browse-file-button"
+            style={{
+              padding: '8px 12px',
+              backgroundColor: '#f8fafc',
+              color: '#334155',
+              border: '1px solid #cbd5e1',
+              borderRadius: '6px',
+              fontSize: '13px',
+              fontWeight: 500,
+              cursor: loadingModel ? 'not-allowed' : 'pointer',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '6px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            📄 Fichier...
+          </button>
         </div>
 
         <button
           type="button"
           onClick={handleLoadSelected}
           disabled={loadingModel}
+          data-testid="load-model-button"
           style={{
             padding: '8px 18px',
             backgroundColor: loadingModel ? '#94a3b8' : '#0f766e',
@@ -173,6 +296,7 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
             borderRadius: '6px',
             fontWeight: 'bold',
             cursor: loadingModel ? 'wait' : 'pointer',
+            whiteSpace: 'nowrap',
           }}
         >
           {loadingModel ? '⏳ Téléchargement en cours...' : 'Charger le Modèle MoE'}
