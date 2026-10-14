@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from pathlib import Path
@@ -82,6 +82,32 @@ def get_prompts():
 
     files = [f.name for f in PROMPTS_DIR.glob("*.md") if f.is_file()]
     return [{"id": f, "name": f.replace(".md", "")} for f in sorted(files)]
+
+@app.post("/api/prompts/upload")
+def upload_prompt(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.endswith(".md"):
+        raise HTTPException(status_code=400, detail="Seuls les fichiers .md sont autorisés")
+
+    file_name = Path(file.filename).name
+    if not file_name or file_name == ".md":
+        raise HTTPException(status_code=400, detail="Nom de fichier invalide")
+
+    PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
+    prompt_file = (PROMPTS_DIR / file_name).resolve()
+
+    try:
+        prompt_file.relative_to(PROMPTS_DIR)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Accès non autorisé au fichier de prompt")
+
+    try:
+        content = file.file.read()
+        with open(prompt_file, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erreur lors de l'enregistrement du fichier: {str(e)}")
+
+    return {"id": file_name, "name": file_name.replace(".md", "")}
 
 @app.get("/api/model/info")
 def get_model_info():

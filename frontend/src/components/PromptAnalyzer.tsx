@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { DomainsMap, TokenRoutingInfo } from '../types';
-import { fetchPrompts, PromptOption } from '../api';
+import { fetchPrompts, uploadPromptFile, PromptOption } from '../api';
 
 interface PromptAnalyzerProps {
   onAnalyzePrompt: (prompt: string) => void;
@@ -19,31 +19,56 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
   tokenRouting,
   isRealInference,
 }) => {
-  const [promptText, setPromptText] = useState<string>('');
   const [selectedPromptId, setSelectedPromptId] = useState<string>('');
   const [prompts, setPrompts] = useState<PromptOption[]>([]);
   const [showWarning, setShowWarning] = useState<boolean>(false);
+  const [uploading, setUploading] = useState<boolean>(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
-    fetchPrompts().then(data => {
-      setPrompts(data);
-    }).catch(err => {
-      console.error(err);
-    });
+    fetchPrompts()
+      .then((data) => {
+        setPrompts(data);
+      })
+      .catch((err) => {
+        console.error(err);
+      });
   }, []);
 
-  const handleSelectPrompt = (id: string) => {
-    setSelectedPromptId(id);
-    if (id) {
-      setPromptText(id);
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.md')) {
+      setUploadError('Seuls les fichiers .md sont autorisés');
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setUploadError(null);
+      const newPrompt = await uploadPromptFile(file);
+      setPrompts((prev) => {
+        const exists = prev.some((p) => p.id === newPrompt.id);
+        if (exists) return prev;
+        return [...prev, newPrompt].sort((a, b) => a.name.localeCompare(b.name));
+      });
+      setSelectedPromptId(newPrompt.id);
+    } catch (err: any) {
+      setUploadError(err.message || "Erreur lors de l'upload du fichier");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
     }
   };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const targetPrompt = promptText.trim() || selectedPromptId.trim();
-    if (!targetPrompt) return;
-    onAnalyzePrompt(targetPrompt);
+    if (!selectedPromptId.trim()) return;
+    onAnalyzePrompt(selectedPromptId.trim());
   };
 
   return (
@@ -58,9 +83,9 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
         borderRadius: '8px',
       }}
     >
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px', flexWrap: 'wrap', gap: '8px' }}>
-        <label htmlFor="custom-prompt-input" style={{ fontWeight: 'bold', color: '#1e293b' }}>
-          💬 Analyse sur Prompt Personnalisé (Routage Gating Network MoE) :
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '8px' }}>
+        <label htmlFor="prompt-selector" style={{ fontWeight: 'bold', color: '#1e293b' }}>
+          💬 Analyse sur Prompt (.md) (Routage Gating Network MoE) :
         </label>
         <button
           type="button"
@@ -96,70 +121,92 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
         </div>
       )}
 
-      {prompts.length > 0 && (
-        <div style={{ marginBottom: '10px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
-          <label htmlFor="prompt-selector" style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>
-            📂 Charger un prompt prédéfini (.md) :
-          </label>
-          <select
-            id="prompt-selector"
-            data-testid="prompt-selector"
-            value={selectedPromptId}
-            onChange={(e) => handleSelectPrompt(e.target.value)}
-            style={{
-              padding: '6px 10px',
-              fontSize: '13px',
-              borderRadius: '6px',
-              border: '1px solid #94a3b8',
-              backgroundColor: '#ffffff',
-            }}
-          >
-            <option value="">-- Choisir un prompt existant --</option>
-            {prompts.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
-          </select>
-        </div>
-      )}
-
-      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+      <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', alignItems: 'center' }}>
         <input
-          id="custom-prompt-input"
-          data-testid="custom-prompt-input"
-          type="text"
-          value={promptText}
-          onChange={(e) => {
-            setPromptText(e.target.value);
-            if (selectedPromptId && e.target.value !== selectedPromptId) {
-              setSelectedPromptId('');
-            }
+          ref={fileInputRef}
+          type="file"
+          accept=".md"
+          data-testid="upload-prompt-input"
+          style={{ display: 'none' }}
+          onChange={handleFileUpload}
+        />
+
+        <button
+          type="button"
+          data-testid="upload-prompt-btn"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={uploading || loading}
+          style={{
+            padding: '9px 14px',
+            backgroundColor: uploading ? '#cbd5e1' : '#0f766e',
+            color: '#ffffff',
+            border: 'none',
+            borderRadius: '6px',
+            fontWeight: '600',
+            fontSize: '13px',
+            cursor: uploading || loading ? 'not-allowed' : 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
           }}
-          placeholder="Saisissez un prompt libre (ex: Écris un algorithme Python pour résoudre une équation différentielle)..."
+        >
+          {uploading ? '⏳ Téléversement...' : '📤 Uploader un prompt .md'}
+        </button>
+
+        <select
+          id="prompt-selector"
+          data-testid="prompt-selector"
+          value={selectedPromptId}
+          onChange={(e) => setSelectedPromptId(e.target.value)}
           style={{
             flex: 1,
-            minWidth: '260px',
+            minWidth: '240px',
             padding: '9px 12px',
             fontSize: '14px',
             borderRadius: '6px',
             border: '1px solid #94a3b8',
+            backgroundColor: '#ffffff',
+            color: selectedPromptId ? '#0f172a' : '#64748b',
           }}
-        />
+        >
+          <option value="">-- Sélectionner un fichier de prompt .md --</option>
+          {prompts.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name} ({p.id})
+            </option>
+          ))}
+        </select>
+
         <button
           type="submit"
-          disabled={loading || (!promptText.trim() && !selectedPromptId.trim())}
+          data-testid="analyze-prompt-btn"
+          disabled={loading || uploading || !selectedPromptId.trim()}
           style={{
-            padding: '9px 16px',
-            backgroundColor: loading || (!promptText.trim() && !selectedPromptId.trim()) ? '#94a3b8' : '#2563eb',
+            padding: '9px 18px',
+            backgroundColor: loading || uploading || !selectedPromptId.trim() ? '#94a3b8' : '#2563eb',
             color: '#ffffff',
             border: 'none',
             borderRadius: '6px',
             fontWeight: 'bold',
-            cursor: loading || (!promptText.trim() && !selectedPromptId.trim()) ? 'not-allowed' : 'pointer',
+            fontSize: '14px',
+            cursor: loading || uploading || !selectedPromptId.trim() ? 'not-allowed' : 'pointer',
           }}
         >
           Analyser le Prompt
         </button>
       </form>
+
+      {uploadError && (
+        <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '8px' }}>
+          ⚠️ {uploadError}
+        </div>
+      )}
+
+      {selectedPromptId && (
+        <div style={{ marginTop: '8px', fontSize: '12px', color: '#64748b' }}>
+          Fichier sélectionné : <span style={{ fontFamily: 'monospace', color: '#0f172a', fontWeight: 'bold' }}>{selectedPromptId}</span>
+        </div>
+      )}
 
       {detectedDomains && Object.keys(detectedDomains).length > 0 && (
         <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
