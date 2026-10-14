@@ -3,6 +3,12 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { ModelManager } from './ModelManager';
 import { MoEModelOption, ModelInfo } from '../types';
+import * as api from '../api';
+
+vi.mock('../api', () => ({
+  fetchModelProgress: vi.fn(),
+  uploadLocalModel: vi.fn(),
+}));
 
 describe('ModelManager Component', () => {
   const mockModels: MoEModelOption[] = [
@@ -66,7 +72,7 @@ describe('ModelManager Component', () => {
     expect(badge.parentElement).toBe(helpTooltip.parentElement);
   });
 
-  it('renders local folder and file browse buttons and hidden file inputs', () => {
+  it('renders local folder browse button and hidden webkitdirectory input without single file button', () => {
     render(
       <ModelManager
         models={mockModels}
@@ -77,17 +83,15 @@ describe('ModelManager Component', () => {
     );
 
     const folderButton = screen.getByTestId('browse-folder-button');
-    const fileButton = screen.getByTestId('browse-file-button');
     const folderInput = screen.getByTestId('local-folder-input');
-    const fileInput = screen.getByTestId('local-file-input');
 
     expect(folderButton).toBeInTheDocument();
     expect(folderButton).toHaveTextContent(/Parcourir dossier/i);
-    expect(fileButton).toBeInTheDocument();
-    expect(fileButton).toHaveTextContent(/Fichier/i);
-
     expect(folderInput).toHaveAttribute('type', 'file');
-    expect(fileInput).toHaveAttribute('type', 'file');
+
+    // Single file button should not exist
+    expect(screen.queryByTestId('browse-file-button')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('local-file-input')).not.toBeInTheDocument();
   });
 
   it('triggers folder input click when browse folder button is clicked', () => {
@@ -109,8 +113,18 @@ describe('ModelManager Component', () => {
     expect(clickSpy).toHaveBeenCalled();
   });
 
-  it('fills custom model input when a local directory is chosen', async () => {
+  it('uploads folder files to server and selects model using returned server path', async () => {
     const handleSelectModel = vi.fn();
+    const serverModelPath = '/app/models/my-custom-moe-model';
+
+    (api.uploadLocalModel as any).mockResolvedValueOnce({
+      status: 'success',
+      model_id: serverModelPath,
+      model_name: 'my-custom-moe-model',
+      model_path: serverModelPath,
+      files_count: 2,
+    });
+
     render(
       <ModelManager
         models={mockModels}
@@ -123,48 +137,49 @@ describe('ModelManager Component', () => {
     const folderInput = screen.getByTestId('local-folder-input');
     const customInput = screen.getByTestId('custom-model-input') as HTMLInputElement;
 
-    const mockFile = new File(['dummy-content'], 'config.json', { type: 'application/json' });
-    Object.defineProperty(mockFile, 'webkitRelativePath', {
+    const mockConfigFile = new File(['{"model_type": "moe"}'], 'config.json', { type: 'application/json' });
+    Object.defineProperty(mockConfigFile, 'webkitRelativePath', {
       value: 'my-custom-moe-model/config.json',
       writable: false,
     });
 
+    const mockWeightFile = new File(['fake-weights'], 'model.safetensors', { type: 'application/octet-stream' });
+    Object.defineProperty(mockWeightFile, 'webkitRelativePath', {
+      value: 'my-custom-moe-model/model.safetensors',
+      writable: false,
+    });
+
     fireEvent.change(folderInput, {
       target: {
-        files: [mockFile],
+        files: [mockConfigFile, mockWeightFile],
       },
     });
 
-    expect(customInput.value).toBe('my-custom-moe-model');
-
-    // Clicking load loads the custom model
-    const loadButton = screen.getByTestId('load-model-button');
-    fireEvent.click(loadButton);
-
-    expect(handleSelectModel).toHaveBeenCalledWith('my-custom-moe-model');
+    await waitFor(() => {
+      expect(api.uploadLocalModel).toHaveBeenCalledTimes(1);
+      expect(customInput.value).toBe(serverModelPath);
+      expect(handleSelectModel).toHaveBeenCalledWith(serverModelPath);
+    });
   });
 
-  it('fills custom model input with full path if available (e.g. Electron / local runtime)', () => {
-    const handleSelectModel = vi.fn();
+  it('displays error alert when folder upload fails', async () => {
+    (api.uploadLocalModel as any).mockRejectedValueOnce(
+      new Error('Extension de fichier non autorisée')
+    );
+
     render(
       <ModelManager
         models={mockModels}
         currentModel={mockCurrentModel}
-        onSelectModel={handleSelectModel}
+        onSelectModel={vi.fn()}
         loadingModel={false}
       />
     );
 
     const folderInput = screen.getByTestId('local-folder-input');
-    const customInput = screen.getByTestId('custom-model-input') as HTMLInputElement;
-
-    const mockFile = new File(['dummy-content'], 'config.json', { type: 'application/json' });
-    Object.defineProperty(mockFile, 'path', {
-      value: 'C:\\Models\\local-moe\\config.json',
-      writable: false,
-    });
+    const mockFile = new File(['bad'], 'script.exe', { type: 'application/octet-stream' });
     Object.defineProperty(mockFile, 'webkitRelativePath', {
-      value: 'local-moe/config.json',
+      value: 'bad-model/script.exe',
       writable: false,
     });
 
@@ -174,7 +189,11 @@ describe('ModelManager Component', () => {
       },
     });
 
-    expect(customInput.value).toBe('C:\\Models\\local-moe');
+    await waitFor(() => {
+      const errorAlert = screen.getByTestId('upload-error');
+      expect(errorAlert).toBeInTheDocument();
+      expect(errorAlert).toHaveTextContent(/Extension de fichier non autorisée/i);
+    });
   });
 
   it('disables controls during model loading', () => {
@@ -188,7 +207,6 @@ describe('ModelManager Component', () => {
     );
 
     expect(screen.getByTestId('browse-folder-button')).toBeDisabled();
-    expect(screen.getByTestId('browse-file-button')).toBeDisabled();
     expect(screen.getByTestId('load-model-button')).toBeDisabled();
     expect(screen.getByTestId('load-model-button')).toHaveTextContent(/Téléchargement en cours/i);
   });

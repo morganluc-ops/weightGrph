@@ -1,10 +1,19 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import os
 from pathlib import Path
+from typing import List
 from app.analyzer import MoEAnalyzer, PromptAnalysisRequest, LoadModelRequest
 
 PROMPTS_DIR = (Path(__file__).resolve().parent.parent / "prompts").resolve()
+MODELS_DIR = (Path(__file__).resolve().parent.parent / "models").resolve()
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+ALLOWED_MODEL_EXTENSIONS = {
+    ".json", ".safetensors", ".bin", ".pt", ".pth", ".txt",
+    ".model", ".tiktoken", ".yaml", ".yml"
+}
+MAX_UPLOAD_FILE_SIZE = 2 * 1024 * 1024 * 1024  # 2 Go max per file
 
 app = FastAPI(title="MoE Weight & Expert Analyzer API", version="2.0.0")
 
@@ -86,3 +95,96 @@ def get_prompts():
 @app.get("/api/model/info")
 def get_model_info():
     return analyzer.get_model_info()
+
+@app.get("/api/models/local")
+def get_local_models():
+    if not MODELS_DIR.exists():
+        return []
+    local_models = []
+    for entry in sorted(MODELS_DIR.iterdir()):
+        if entry.is_dir():
+            files = [f.name for f in entry.glob("**/*") if f.is_file()]
+            local_models.append({
+                "id": str(entry.resolve()),
+                "name": entry.name,
+                "path": str(entry.resolve()),
+                "files_count": len(files),
+            })
+    return local_models
+
+@app.post("/api/models/upload")
+def upload_model_files(files: List[UploadFile] = File(...)):
+    if not files:
+        raise HTTPException(status_code=400, detail="Aucun fichier fourni")
+
+    model_root_dir = None
+    model_name = None
+
+    for file in files:
+        raw_name = file.filename or ""
+        clean_name = raw_name.replace("\\", "/").strip()
+
+        if not clean_name:
+            raise HTTPException(status_code=400, detail="Nom de fichier vide ou invalide")
+
+        # Rejeter tout chemin absolu ou lettre de lecteur Windows
+        if clean_name.startswith("/") or ":" in clean_name:
+            raise HTTPException(status_code=400, detail=f"Chemin absolu interdit: {clean_name}")
+
+        # Séparer les segments
+        parts = [p for p in clean_name.split("/") if p and p != "."]
+
+        # Rejeter le path traversal
+        if any(p == ".." for p in parts):
+            raise HTTPException(status_code=400, detail=f"Path traversal ('..') interdit: {clean_name}")
+
+        # Vérifier l'extension
+        suffix = Path(parts[-1]).suffix.lower()
+        if suffix not in ALLOWED_MODEL_EXTENSIONS:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Extension non autorisée pour le fichier '{parts[-1]}': {suffix}. Extensions autorisées: {sorted(list(ALLOWED_MODEL_EXTENSIONS))}"
+            )
+
+        # Déterminer le dossier racine du modèle
+        if len(parts) > 1:
+            current_model_name = parts[0]
+            current_model_dir = (MODELS_DIR / current_model_name).resolve()
+        else:
+            current_model_name = Path(parts[0]).stem
+            current_model_dir = (MODELS_DIR / current_model_name).resolve()
+
+        if model_root_dir is None:
+            model_root_dir = current_model_dir
+            model_name = current_model_name
+
+        dest_path = (MODELS_DIR / Path(*parts)).resolve()
+
+        # Sécurité : vérifier que dest_path reste sous MODELS_DIR
+        try:
+            dest_path.relative_to(MODELS_DIR)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Accès non autorisé en dehors du dossier models")
+
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+
+        size = 0
+        with open(dest_path, "wb") as f_out:
+            while chunk := file.file.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_UPLOAD_FILE_SIZE:
+                    dest_path.unlink(missing_ok=True)
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Fichier trop volumineux: {parts[-1]} (limite max: 2 Go)"
+                    )
+                f_out.write(chunk)
+
+    return {
+        "status": "success",
+        "model_id": str(model_root_dir),
+        "model_name": model_name,
+        "model_path": str(model_root_dir),
+        "files_count": len(files),
+    }
+

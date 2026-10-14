@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { MoEModelOption, ModelInfo, DownloadProgressInfo } from '../types';
-import { fetchModelProgress } from '../api';
+import { fetchModelProgress, uploadLocalModel } from '../api';
 
 interface ModelManagerProps {
   models: MoEModelOption[];
@@ -23,6 +23,9 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
   const [customHuggingFaceId, setCustomHuggingFaceId] = useState<string>('');
   const [elapsedSeconds, setElapsedSeconds] = useState<number>(0);
   const [progressInfo, setProgressInfo] = useState<DownloadProgressInfo | null>(null);
+  const [isUploading, setIsUploading] = useState<boolean>(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+
 
   useEffect(() => {
     if (currentModel?.model_id) {
@@ -71,46 +74,24 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
   };
 
   const folderInputRef = React.useRef<HTMLInputElement>(null);
-  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
-  const handleFolderSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFolderSelect = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files || files.length === 0) return;
 
-    const first = files[0];
-    const fileWithPath = first as File & { path?: string };
-
-    if (fileWithPath.path) {
-      const fullPath = fileWithPath.path;
-      if (first.webkitRelativePath) {
-        const relParts = first.webkitRelativePath.split('/');
-        const rootDirName = relParts[0];
-        const normalized = fullPath.replace(/\\/g, '/');
-        const rootIndex = normalized.lastIndexOf(rootDirName);
-        if (rootIndex !== -1) {
-          setCustomHuggingFaceId(fullPath.substring(0, rootIndex + rootDirName.length));
-          return;
-        }
+    try {
+      setIsUploading(true);
+      setUploadError(null);
+      const res = await uploadLocalModel(files);
+      setCustomHuggingFaceId(res.model_path);
+      onSelectModel(res.model_path);
+    } catch (err: any) {
+      setUploadError(err.message || "Erreur lors de l'envoi du dossier modèle au serveur");
+    } finally {
+      setIsUploading(false);
+      if (folderInputRef.current) {
+        folderInputRef.current.value = '';
       }
-      setCustomHuggingFaceId(fullPath);
-    } else if (first.webkitRelativePath) {
-      const folderName = first.webkitRelativePath.split('/')[0];
-      setCustomHuggingFaceId(folderName);
-    } else if (first.name) {
-      setCustomHuggingFaceId(first.name);
-    }
-  };
-
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    const first = files[0];
-    const fileWithPath = first as File & { path?: string };
-    if (fileWithPath.path) {
-      setCustomHuggingFaceId(fileWithPath.path);
-    } else {
-      setCustomHuggingFaceId(first.name);
     }
   };
 
@@ -224,84 +205,87 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
           data-testid="local-folder-input"
         />
 
-        <input
-          ref={fileInputRef}
-          type="file"
-          style={{ display: 'none' }}
-          onChange={handleFileSelect}
-          data-testid="local-file-input"
-        />
-
-        <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-          <button
-            type="button"
-            onClick={() => folderInputRef.current?.click()}
-            disabled={loadingModel}
-            title="Sélectionner un dossier local contenant les poids du modèle MoE"
-            aria-label="Sélectionner un dossier local"
-            data-testid="browse-folder-button"
-            style={{
-              padding: '8px 12px',
-              backgroundColor: '#f8fafc',
-              color: '#334155',
-              border: '1px solid #cbd5e1',
-              borderRadius: '6px',
-              fontSize: '13px',
-              fontWeight: 500,
-              cursor: loadingModel ? 'not-allowed' : 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            📁 Parcourir dossier...
-          </button>
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={loadingModel}
-            title="Sélectionner un fichier local (.safetensors, .pt, .json)"
-            aria-label="Sélectionner un fichier local"
-            data-testid="browse-file-button"
-            style={{
-              padding: '8px 12px',
-              backgroundColor: '#f8fafc',
-              color: '#334155',
-              border: '1px solid #cbd5e1',
-              borderRadius: '6px',
-              fontSize: '13px',
-              fontWeight: 500,
-              cursor: loadingModel ? 'not-allowed' : 'pointer',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            📄 Fichier...
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={() => folderInputRef.current?.click()}
+          disabled={loadingModel || isUploading}
+          title="Sélectionner un dossier local contenant les poids du modèle MoE (upload vers le serveur)"
+          aria-label="Sélectionner un dossier local"
+          data-testid="browse-folder-button"
+          style={{
+            padding: '8px 12px',
+            backgroundColor: '#f8fafc',
+            color: '#334155',
+            border: '1px solid #cbd5e1',
+            borderRadius: '6px',
+            fontSize: '13px',
+            fontWeight: 500,
+            cursor: loadingModel || isUploading ? 'not-allowed' : 'pointer',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '6px',
+            whiteSpace: 'nowrap',
+          }}
+        >
+          {isUploading ? '📤 Envoi en cours...' : '📁 Parcourir dossier...'}
+        </button>
 
         <button
           type="button"
           onClick={handleLoadSelected}
-          disabled={loadingModel}
+          disabled={loadingModel || isUploading}
           data-testid="load-model-button"
           style={{
             padding: '8px 18px',
-            backgroundColor: loadingModel ? '#94a3b8' : '#0f766e',
+            backgroundColor: loadingModel || isUploading ? '#94a3b8' : '#0f766e',
             color: '#fff',
             border: 'none',
             borderRadius: '6px',
             fontWeight: 'bold',
-            cursor: loadingModel ? 'wait' : 'pointer',
+            cursor: loadingModel || isUploading ? 'wait' : 'pointer',
             whiteSpace: 'nowrap',
           }}
         >
           {loadingModel ? '⏳ Téléchargement en cours...' : 'Charger le Modèle MoE'}
         </button>
       </div>
+
+      {isUploading && (
+        <div
+          role="status"
+          data-testid="upload-status"
+          style={{
+            marginTop: '10px',
+            padding: '10px 14px',
+            backgroundColor: '#eff6ff',
+            border: '1px solid #3b82f6',
+            borderRadius: '6px',
+            color: '#1d4ed8',
+            fontSize: '13px',
+            fontWeight: 500,
+          }}
+        >
+          📤 Transfert des fichiers du modèle vers le serveur en cours...
+        </div>
+      )}
+
+      {uploadError && (
+        <div
+          role="alert"
+          data-testid="upload-error"
+          style={{
+            marginTop: '10px',
+            padding: '10px 14px',
+            backgroundColor: '#fef2f2',
+            border: '1px solid #ef4444',
+            borderRadius: '6px',
+            color: '#b91c1c',
+            fontSize: '13px',
+          }}
+        >
+          ⚠️ {uploadError}
+        </div>
+      )}
 
       {loadingModel && (
         <div

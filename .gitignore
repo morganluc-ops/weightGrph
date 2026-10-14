@@ -27,3 +27,8 @@ test-results/
 **/test-results/
 *.png
 
+# Uploaded local models storage
+backend/models/
+models/
+
+

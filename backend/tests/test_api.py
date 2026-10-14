@@ -98,3 +98,71 @@ def test_analyze_prompt_path_traversal_rejected():
     assert response.status_code == 400
     assert "Fichier de prompt introuvable" in response.json()["detail"] or "Accès non autorisé" in response.json()["detail"]
 
+def test_get_local_models_endpoint():
+    response = client.get("/api/models/local")
+    assert response.status_code == 200
+    assert isinstance(response.json(), list)
+
+def test_upload_model_valid():
+    import shutil
+    from pathlib import Path
+    from app.main import MODELS_DIR
+
+    test_model_dir = MODELS_DIR / "my-moe-test"
+    try:
+        files = [
+            ("files", ("my-moe-test/config.json", b'{"model_type": "moe"}', "application/json")),
+            ("files", ("my-moe-test/model.safetensors", b'fake-tensor-bytes', "application/octet-stream")),
+        ]
+        response = client.post("/api/models/upload", files=files)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "success"
+        assert data["model_name"] == "my-moe-test"
+        assert data["files_count"] == 2
+        assert "my-moe-test" in data["model_path"]
+
+        # Verify it appears in local models
+        list_res = client.get("/api/models/local")
+        assert list_res.status_code == 200
+        local_names = [m["name"] for m in list_res.json()]
+        assert "my-moe-test" in local_names
+    finally:
+        if test_model_dir.exists():
+            shutil.rmtree(test_model_dir, ignore_errors=True)
+
+
+def test_upload_model_path_traversal_rejected():
+    # Attempting traversal with ../
+    files = [
+        ("files", ("../../evil.json", b'{"bad": true}', "application/json")),
+    ]
+    response = client.post("/api/models/upload", files=files)
+    assert response.status_code == 400
+    assert "Path traversal" in response.json()["detail"] or "interdit" in response.json()["detail"]
+
+    # Attempting traversal with backslash ..\
+    files_bs = [
+        ("files", ("..\\evil_bs.json", b'{"bad": true}', "application/json")),
+    ]
+    response_bs = client.post("/api/models/upload", files=files_bs)
+    assert response_bs.status_code == 400
+    assert "Path traversal" in response_bs.json()["detail"] or "interdit" in response_bs.json()["detail"]
+
+def test_upload_model_absolute_path_rejected():
+    files = [
+        ("files", ("/etc/config.json", b'{"bad": true}', "application/json")),
+    ]
+    response = client.post("/api/models/upload", files=files)
+    assert response.status_code == 400
+    assert "absolu interdit" in response.json()["detail"]
+
+def test_upload_model_disallowed_extension_rejected():
+    files = [
+        ("files", ("bad-model/malicious.exe", b'MZ...', "application/octet-stream")),
+    ]
+    response = client.post("/api/models/upload", files=files)
+    assert response.status_code == 400
+    assert "Extension non autorisée" in response.json()["detail"]
+
+
