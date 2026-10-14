@@ -80,4 +80,37 @@ describe('Frontend API Client', () => {
       })
     );
   });
+
+  it('loadMoEModel propagates backend error detail', async () => {
+    (fetch as any).mockResolvedValueOnce({
+      ok: false,
+      json: async () => ({ detail: 'Identifiant de modèle invalide : bad-id' }),
+    });
+
+    const { loadMoEModel } = await import('./api');
+    await expect(loadMoEModel('bad-id')).rejects.toThrow('Identifiant de modèle invalide : bad-id');
+  });
+
+  it('fetchModelProgress calls progress endpoint and returns status', async () => {
+    const mockProgress = {
+      status: 'downloading',
+      model_id: 'test/model',
+      progress_percent: 42.5,
+      downloaded_bytes: 42500,
+      total_bytes: 100000,
+      downloaded_mb: 4.2,
+      total_mb: 10.0,
+      speed_mb_s: 1.5,
+      current_file: 'weights.safetensors',
+      stage_message: 'Downloading...',
+    };
+    (fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockProgress,
+    });
+
+    const { fetchModelProgress } = await import('./api');
+    const result = await fetchModelProgress();
+    expect(result).toEqual(mockProgress);
+  });
 });

@@ -167,3 +167,128 @@ def test_analyze_domain_and_prompt_contain_balance_metrics():
     assert 0 <= pbm.dead_experts_count <= pbm.total_experts
     assert 0.0 < pbm.max_expert_load_share <= 100.0
 
+
+def test_validate_model_id_valid_hf():
+    from app.analyzer import validate_model_id
+    valid_ids = [
+        "google/switch-base-8",
+        "optimum-intel-internal-testing/tiny-random-qwen1.5-moe",
+        "Qwen/Qwen1.5-MoE-A2.7B",
+        "allenai/OLMoE-1B-7B-0924",
+        "gpt2",
+        "bert-base-uncased",
+    ]
+    for mid in valid_ids:
+        val, is_local = validate_model_id(mid)
+        assert val == mid
+        assert is_local is False
+
+
+def test_validate_model_id_path_traversal_rejected():
+    from app.analyzer import validate_model_id
+    with pytest.raises(ValueError, match="path traversal interdite"):
+        validate_model_id("../../etc/passwd")
+
+    with pytest.raises(ValueError, match="path traversal interdite"):
+        validate_model_id("models/../..")
+
+
+def test_validate_model_id_unauthorized_paths_rejected():
+    from app.analyzer import validate_model_id
+    with pytest.raises(ValueError, match="Chemin de modèle local non autorisé ou introuvable"):
+        validate_model_id("/etc/shadow")
+
+    with pytest.raises(ValueError, match="Chemin de modèle local non autorisé ou introuvable"):
+        validate_model_id("C:\\Windows\\System32")
+
+
+def test_validate_model_id_invalid_characters_rejected():
+    from app.analyzer import validate_model_id
+    with pytest.raises(ValueError, match="Identifiant de modèle invalide"):
+        validate_model_id("model with spaces")
+
+    with pytest.raises(ValueError, match="Identifiant de modèle invalide"):
+        validate_model_id("evil;rm -rf /")
+
+    with pytest.raises(ValueError, match="Identifiant de modèle invalide"):
+        validate_model_id("namespace/model/subpath")
+
+
+def test_validate_model_id_empty_rejected():
+    from app.analyzer import validate_model_id
+    with pytest.raises(ValueError, match="ne peut pas être vide"):
+        validate_model_id("")
+
+    with pytest.raises(ValueError, match="ne peut pas être vide"):
+        validate_model_id("   ")
+
+
+def test_validate_model_id_local_dir(tmp_path):
+    from app.analyzer import validate_model_id
+    local_dir = tmp_path / "custom-moe-local"
+    local_dir.mkdir()
+
+    # Pass relative dir name under models_dir
+    val, is_local = validate_model_id("custom-moe-local", models_dir=tmp_path)
+    assert is_local is True
+    assert str(local_dir) in val
+
+    # Pass full absolute path under models_dir
+    val2, is_local2 = validate_model_id(str(local_dir), models_dir=tmp_path)
+    assert is_local2 is True
+    assert str(local_dir) == val2
+
+
+def test_analyze_prompt_length_limit():
+    from app.analyzer import MAX_PROMPT_LENGTH
+    analyzer = MoEAnalyzer()
+    oversized_prompt = "A" * (MAX_PROMPT_LENGTH + 1)
+    with pytest.raises(ValueError, match="dépasse la limite maximale autorisée"):
+        analyzer.analyze_prompt(oversized_prompt)
+
+
+def test_load_model_propagates_download_error(monkeypatch):
+    import app.analyzer as analyzer_mod
+    analyzer = MoEAnalyzer()
+
+    def mock_snapshot_download(*args, **kwargs):
+        raise RuntimeError("Simulated network timeout connecting to HuggingFace Hub")
+
+    monkeypatch.setattr(analyzer_mod, "snapshot_download", mock_snapshot_download)
+
+    # Pick an un-cached valid model ID
+    uncached_model = "test-org/uncached-failing-model"
+    with pytest.raises(ValueError, match="Impossible de télécharger le modèle HuggingFace"):
+        analyzer.load_model(uncached_model)
+
+    progress = analyzer.get_download_progress()
+    assert progress["status"] == "error"
+    assert "Simulated network timeout" in progress["stage_message"]
+
+
+def test_analyzer_concurrency_lock():
+    import threading
+    analyzer = MoEAnalyzer()
+    results = []
+    errors = []
+
+    def worker(prompt_text):
+        try:
+            res = analyzer.analyze_prompt(prompt_text)
+            results.append(res)
+        except Exception as e:
+            errors.append(e)
+
+    threads = [
+        threading.Thread(target=worker, args=(f"Thread prompt test {i}",))
+        for i in range(5)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(errors) == 0
+    assert len(results) == 5
+
+

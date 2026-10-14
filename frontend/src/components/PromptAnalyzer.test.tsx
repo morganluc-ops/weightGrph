@@ -53,6 +53,7 @@ describe('PromptAnalyzer Component', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('combobox')).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /code/i })).toBeInTheDocument();
     });
 
     const select = screen.getByRole('combobox');
