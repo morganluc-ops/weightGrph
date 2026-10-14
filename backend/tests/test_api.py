@@ -165,4 +165,55 @@ def test_upload_prompt_sanitizes_path_traversal():
         if file_path.exists():
             file_path.unlink()
 
+def test_upload_prompt_case_insensitive_extension():
+    filename = "test_upper.MD"
+    file_path = PROMPTS_DIR / filename
+    if file_path.exists():
+        file_path.unlink()
+
+    try:
+        content = b"# Upper extension test"
+        response = client.post(
+            "/api/prompts/upload",
+            files={"file": (filename, io.BytesIO(content), "text/markdown")},
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == filename
+        assert response.json()["name"] == "test_upper"
+        assert file_path.exists()
+    finally:
+        if file_path.exists():
+            file_path.unlink()
+
+def test_upload_prompt_conflict_duplicate():
+    # 'code.md' exists in PROMPTS_DIR
+    response = client.post(
+        "/api/prompts/upload",
+        files={"file": ("code.md", io.BytesIO(b"# Duplicate code"), "text/markdown")},
+    )
+    assert response.status_code == 409
+    assert "existe déjà" in response.json()["detail"]
+
+def test_upload_prompt_payload_too_large():
+    filename = "test_oversized.md"
+    # Create content > 1 Mo (e.g. 1 Mo + 1024 bytes)
+    oversized_content = b"A" * (1 * 1024 * 1024 + 1024)
+    response = client.post(
+        "/api/prompts/upload",
+        files={"file": (filename, io.BytesIO(oversized_content), "text/markdown")},
+    )
+    assert response.status_code == 413
+    assert "dépassé" in response.json()["detail"] or "1 Mo" in response.json()["detail"]
+
+def test_upload_prompt_invalid_utf8():
+    filename = "test_invalid_utf8.md"
+    invalid_content = b"\x80\x81\xff\xfe"
+    response = client.post(
+        "/api/prompts/upload",
+        files={"file": (filename, io.BytesIO(invalid_content), "text/markdown")},
+    )
+    assert response.status_code == 400
+    assert "UTF-8 valide" in response.json()["detail"]
+
+
 

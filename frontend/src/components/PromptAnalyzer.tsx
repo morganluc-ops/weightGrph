@@ -40,7 +40,7 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.name.endsWith('.md')) {
+    if (!file.name.toLowerCase().endsWith('.md')) {
       setUploadError('Seuls les fichiers .md sont autorisés');
       return;
     }
@@ -125,7 +125,7 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
         <input
           ref={fileInputRef}
           type="file"
-          accept=".md"
+          accept=".md,.MD"
           data-testid="upload-prompt-input"
           style={{ display: 'none' }}
           onChange={handleFileUpload}
@@ -197,7 +197,7 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
       </form>
 
       {uploadError && (
-        <div style={{ color: '#dc2626', fontSize: '13px', marginTop: '8px' }}>
+        <div data-testid="upload-error" style={{ color: '#dc2626', fontSize: '13px', marginTop: '8px' }}>
           ⚠️ {uploadError}
         </div>
       )}

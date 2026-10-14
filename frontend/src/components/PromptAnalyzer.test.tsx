@@ -115,6 +115,54 @@ describe('PromptAnalyzer Component', () => {
     expect(screen.getByText(/Seuls les fichiers \.md sont autorisés/i)).toBeInTheDocument();
   });
 
+  it('accepts files with uppercase .MD extension', async () => {
+    (api.uploadPromptFile as any).mockResolvedValue({
+      id: 'UPPER.MD',
+      name: 'UPPER',
+    });
+
+    render(
+      <PromptAnalyzer
+        onAnalyzePrompt={vi.fn()}
+        loading={false}
+        domainsMap={mockDomains}
+      />
+    );
+
+    const fileInput = screen.getByTestId('upload-prompt-input');
+    const file = new File(['# Content'], 'UPPER.MD', { type: 'text/markdown' });
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(api.uploadPromptFile).toHaveBeenCalledWith(file);
+    });
+  });
+
+  it('displays API error message on upload conflict (409) or size limit (413)', async () => {
+    (api.uploadPromptFile as any).mockRejectedValue(
+      new Error("Un prompt nommé 'code.md' existe déjà")
+    );
+
+    render(
+      <PromptAnalyzer
+        onAnalyzePrompt={vi.fn()}
+        loading={false}
+        domainsMap={mockDomains}
+      />
+    );
+
+    const fileInput = screen.getByTestId('upload-prompt-input');
+    const file = new File(['# Code duplicate'], 'code.md', { type: 'text/markdown' });
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('upload-error');
+      expect(errorEl).toHaveTextContent("Un prompt nommé 'code.md' existe déjà");
+    });
+  });
+
   it('toggles data quality warning alert when prevention button is clicked', async () => {
     render(
       <PromptAnalyzer

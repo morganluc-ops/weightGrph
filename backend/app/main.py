@@ -83,13 +83,16 @@ def get_prompts():
     files = [f.name for f in PROMPTS_DIR.glob("*.md") if f.is_file()]
     return [{"id": f, "name": f.replace(".md", "")} for f in sorted(files)]
 
+MAX_PROMPT_FILE_SIZE = 1 * 1024 * 1024  # 1 Mo
+CHUNK_SIZE = 64 * 1024  # 64 Ko
+
 @app.post("/api/prompts/upload")
 def upload_prompt(file: UploadFile = File(...)):
-    if not file.filename or not file.filename.endswith(".md"):
+    if not file.filename or not file.filename.lower().endswith(".md"):
         raise HTTPException(status_code=400, detail="Seuls les fichiers .md sont autorisés")
 
     file_name = Path(file.filename).name
-    if not file_name or file_name == ".md":
+    if not file_name or file_name.lower() == ".md":
         raise HTTPException(status_code=400, detail="Nom de fichier invalide")
 
     PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -100,14 +103,43 @@ def upload_prompt(file: UploadFile = File(...)):
     except ValueError:
         raise HTTPException(status_code=400, detail="Accès non autorisé au fichier de prompt")
 
+    if prompt_file.exists():
+        raise HTTPException(status_code=409, detail=f"Un prompt nommé '{file_name}' existe déjà")
+
+    chunks = []
+    total_size = 0
     try:
-        content = file.file.read()
+        while True:
+            chunk = file.file.read(CHUNK_SIZE)
+            if not chunk:
+                break
+            total_size += len(chunk)
+            if total_size > MAX_PROMPT_FILE_SIZE:
+                raise HTTPException(
+                    status_code=413,
+                    detail="Le fichier dépasse la taille maximale autorisée (1 Mo)"
+                )
+            chunks.append(chunk)
+
+        content = b"".join(chunks)
+
+        try:
+            _ = content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="Le contenu du fichier n'est pas un texte UTF-8 valide"
+            )
+
         with open(prompt_file, "wb") as f:
             f.write(content)
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'enregistrement du fichier: {str(e)}")
 
-    return {"id": file_name, "name": file_name.replace(".md", "")}
+    name = file_name[:-3] if file_name.lower().endswith(".md") else file_name
+    return {"id": file_name, "name": name}
 
 @app.get("/api/model/info")
 def get_model_info():
