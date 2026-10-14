@@ -9,6 +9,8 @@ from app.analyzer import (
     PromptAnalysisRequest,
     LoadModelRequest,
     MAX_PROMPT_LENGTH,
+    PromptComparisonRequest,
+    PromptComparisonResult,
 )
 
 logger = logging.getLogger(__name__)
@@ -92,49 +94,89 @@ def analyze_domain(domain_id: str):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+def resolve_prompt_content(prompt_input: str, analyzer_instance: MoEAnalyzer) -> tuple[str, str]:
+    if not isinstance(prompt_input, str):
+        raise HTTPException(status_code=400, detail="Le format du prompt est invalide")
+
+    clean = prompt_input.strip()
+    if not clean:
+        raise HTTPException(status_code=400, detail="Le prompt ne peut pas être vide")
+
+    # 1. Protection contre le path traversal
+    normalized_parts = clean.replace("\\", "/").split("/")
+    if ".." in normalized_parts:
+        raise HTTPException(status_code=400, detail="Accès non autorisé au fichier de prompt")
+
+    # 2. Si c'est un identifiant de domaine préconfiguré
+    if clean in analyzer_instance.domain_corpus:
+        label = analyzer_instance.domains_info.get(clean, clean)
+        return analyzer_instance.domain_corpus[clean], label
+
+    # 3. Si c'est un fichier .md
+    if clean.lower().endswith(".md"):
+        file_name = Path(clean).name
+        prompt_file = (PROMPTS_DIR / file_name).resolve()
+
+        try:
+            prompt_file.relative_to(PROMPTS_DIR)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Accès non autorisé au fichier de prompt")
+
+        # Fallback si casing différent
+        if not prompt_file.is_file() and file_name.lower().endswith(".md"):
+            normalized_file = (PROMPTS_DIR / f"{file_name[:-3]}.md").resolve()
+            if normalized_file.is_file():
+                prompt_file = normalized_file
+
+        if not prompt_file.is_file():
+            raise HTTPException(status_code=400, detail=f"Fichier de prompt introuvable: {file_name}")
+
+        with open(prompt_file, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        if len(content) > MAX_PROMPT_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Le contenu du fichier de prompt dépasse la limite autorisée ({MAX_PROMPT_LENGTH} caractères)",
+            )
+        return content, file_name
+
+    # 4. Prompt texte libre
+    if len(clean) > MAX_PROMPT_LENGTH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Le prompt dépasse la limite autorisée ({MAX_PROMPT_LENGTH} caractères)",
+        )
+
+    short_label = clean[:60] + ("..." if len(clean) > 60 else "")
+    return clean, short_label
+
+
 @app.post("/api/analyze-prompt")
 def analyze_prompt(payload: PromptAnalysisRequest):
     try:
-        # Check if the prompt is an id of a prompt file
-        if payload.prompt.lower().endswith(".md"):
-            # Extract only the file name to prevent path traversal
-            file_name = Path(payload.prompt).name
-            prompt_file = (PROMPTS_DIR / file_name).resolve()
-
-            # Ensure prompt_file stays within PROMPTS_DIR
-            try:
-                prompt_file.relative_to(PROMPTS_DIR)
-            except ValueError:
-                raise HTTPException(status_code=400, detail="Accès non autorisé au fichier de prompt")
-
-            # Fallback to normalized lowercase .md if exact casing does not exist on disk (Linux)
-            if not prompt_file.is_file() and file_name.lower().endswith(".md"):
-                normalized_file = (PROMPTS_DIR / f"{file_name[:-3]}.md").resolve()
-                if normalized_file.is_file():
-                    prompt_file = normalized_file
-
-            if prompt_file.is_file():
-                with open(prompt_file, "r", encoding="utf-8") as f:
-                    content = f.read()
-                if len(content) > MAX_PROMPT_LENGTH:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Le contenu du fichier de prompt dépasse la limite autorisée ({MAX_PROMPT_LENGTH} caractères)",
-                    )
-                return analyzer.analyze_prompt(content)
-            else:
-                # If a .md file was explicitly specified but does not exist, reject or treat as invalid file
-                raise HTTPException(status_code=400, detail=f"Fichier de prompt introuvable: {file_name}")
-
-        if len(payload.prompt) > MAX_PROMPT_LENGTH:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Le prompt dépasse la limite autorisée ({MAX_PROMPT_LENGTH} caractères)",
-            )
-
-        return analyzer.analyze_prompt(payload.prompt)
+        content, _ = resolve_prompt_content(payload.prompt, analyzer)
+        return analyzer.analyze_prompt(content)
+    except HTTPException:
+        raise
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/compare-prompts", response_model=PromptComparisonResult)
+def compare_prompts_endpoint(payload: PromptComparisonRequest):
+    try:
+        content_a, label_a = resolve_prompt_content(payload.prompt_a, analyzer)
+        content_b, label_b = resolve_prompt_content(payload.prompt_b, analyzer)
+        return analyzer.compare_prompts(content_a, content_b, label_a, label_b)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Erreur inattendue lors de la comparaison des prompts: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur interne lors de la comparaison: {str(e)}")
+
 
 @app.get("/api/prompts")
 def get_prompts():

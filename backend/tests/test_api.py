@@ -1,4 +1,4 @@
-import io
+﻿import io
 from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
@@ -529,6 +529,89 @@ def test_analyze_prompt_truncation_flag_on_long_input():
     assert data["original_token_count"] > 128
     assert data["analyzed_token_count"] == 128
     assert len(data["token_routing"]) == 128
+def test_compare_prompts_endpoint_success_with_md_and_domain():
+    response = client.post(
+        "/api/compare-prompts",
+        json={"prompt_a": "code.md", "prompt_b": "philosophie"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["prompt_a_label"] == "code.md"
+    assert data["prompt_b_label"] == "Philosophie & Éthique"
+    assert len(data["matrix_a"]) == data["num_layers"]
+    assert len(data["matrix_b"]) == data["num_layers"]
+    assert len(data["diff_matrix"]) == data["num_layers"]
+    assert 0.0 <= data["global_jsd"] <= 1.0
+    assert len(data["layer_jsd"]) == data["num_layers"]
+    assert len(data["top_divergent_experts"]) > 0
+
+    # Verify diff math
+    l0_diff0 = data["diff_matrix"][0][0]
+    expected = round(data["matrix_a"][0][0] - data["matrix_b"][0][0], 2)
+    assert l0_diff0 == pytest.approx(expected, abs=0.01)
+
+
+def test_compare_prompts_endpoint_success_with_custom_texts():
+    response = client.post(
+        "/api/compare-prompts",
+        json={
+            "prompt_a": "Développe une API REST avec FastAPI en Python",
+            "prompt_b": "La liberté et l'impératif catégorique chez Emmanuel Kant",
+        },
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert "FastAPI" in data["prompt_a_label"]
+    assert "libert" in data["prompt_b_label"] or "Kant" in data["prompt_b_label"]
+    assert data["global_jsd"] >= 0.0
+
+
+def test_compare_prompts_endpoint_identical_prompts():
+    response = client.post(
+        "/api/compare-prompts",
+        json={"prompt_a": "code.md", "prompt_b": "code.md"},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["global_jsd"] == 0.0
+    for l_jsd in data["layer_jsd"]:
+        assert l_jsd == 0.0
+    for row in data["diff_matrix"]:
+        for val in row:
+            assert val == 0.0
+
+
+def test_compare_prompts_endpoint_path_traversal_rejected():
+    res_a = client.post(
+        "/api/compare-prompts",
+        json={"prompt_a": "../../etc/shadow.md", "prompt_b": "code.md"},
+    )
+    assert res_a.status_code == 400
+    assert "Accès non autorisé" in res_a.json()["detail"] or "introuvable" in res_a.json()["detail"]
+
+    res_b = client.post(
+        "/api/compare-prompts",
+        json={"prompt_a": "code.md", "prompt_b": "../../../secret.md"},
+    )
+    assert res_b.status_code == 400
+    assert "Accès non autorisé" in res_b.json()["detail"] or "introuvable" in res_b.json()["detail"]
+
+
+def test_compare_prompts_endpoint_validation():
+    # Empty prompt
+    res = client.post("/api/compare-prompts", json={"prompt_a": "", "prompt_b": "code.md"})
+    assert res.status_code == 400
+    assert "ne peut pas être vide" in res.json()["detail"]
+
+    res = client.post("/api/compare-prompts", json={"prompt_a": "code.md", "prompt_b": "   "})
+    assert res.status_code == 400
+    assert "ne peut pas être vide" in res.json()["detail"]
+
+    # Nonexistent .md
+    res = client.post("/api/compare-prompts", json={"prompt_a": "missing_file_xyz.md", "prompt_b": "code.md"})
+    assert res.status_code == 400
+    assert "introuvable" in res.json()["detail"]
+
 
 
 

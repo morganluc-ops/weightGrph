@@ -1,4 +1,4 @@
-import { DomainsMap, DomainAnalysisResult, ModelInfo, MoEModelOption, DownloadProgressInfo } from './types';
+import { DomainsMap, DomainAnalysisResult, ModelInfo, MoEModelOption, DownloadProgressInfo, PromptComparisonResult } from './types';
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api';
 
@@ -144,4 +144,18 @@ export async function fetchLocalModels(): Promise<LocalModelOption[]> {
   }
   return response.json();
 }
+
+export async function comparePrompts(promptA: string, promptB: string): Promise<PromptComparisonResult> {
+  const response = await fetch(`${API_BASE_URL}/compare-prompts`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ prompt_a: promptA, prompt_b: promptB }),
+  });
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || 'Erreur lors de la comparaison des prompts');
+  }
+  return response.json();
+}
+
 

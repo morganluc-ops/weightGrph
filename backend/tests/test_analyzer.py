@@ -1,4 +1,4 @@
-import pytest
+﻿import pytest
 from app.analyzer import (
     MoEAnalyzer,
     DomainAnalysisResult,
@@ -8,6 +8,9 @@ from app.analyzer import (
     LayerBalanceMetrics,
     compute_balance_metrics,
     compute_layer_expert_matrix,
+    compute_jsd,
+    PromptComparisonResult,
+    DivergentExpert,
 )
 
 def test_moe_analyzer_initialization():
@@ -425,6 +428,105 @@ def test_token_routing_lifts_32_limit():
     assert len(res.token_routing) > 32
     assert len(res.token_routing) <= 128
     assert res.truncated is False
+def test_compute_jsd_identical_distributions():
+    dist = [10.0, 20.0, 30.0, 40.0]
+    assert compute_jsd(dist, dist) == 0.0
+
+
+def test_compute_jsd_disjoint_distributions():
+    dist_a = [100.0, 0.0]
+    dist_b = [0.0, 100.0]
+    # Disjoint support yields maximal divergence 1.0 (base 2 log)
+    assert compute_jsd(dist_a, dist_b) == 1.0
+
+
+def test_compute_jsd_symmetry():
+    dist_a = [15.0, 35.0, 50.0]
+    dist_b = [40.0, 10.0, 50.0]
+    assert compute_jsd(dist_a, dist_b) == compute_jsd(dist_b, dist_a)
+
+
+def test_compute_jsd_edge_cases():
+    assert compute_jsd([], []) == 0.0
+    assert compute_jsd([0.0, 0.0], [0.0, 0.0]) == 0.0
+    assert compute_jsd([10.0], [10.0, 20.0]) == 0.0
+    assert compute_jsd([0.0, 0.0], [10.0, 20.0]) == 0.0
+
+
+def test_compare_prompts_different_texts():
+    analyzer = MoEAnalyzer()
+    res = analyzer.compare_prompts(
+        "Écris un algorithme Python d'optimisation mathématique",
+        "La métaphysique et l'éthique de la vertu chez Aristote",
+        label_a="Python",
+        label_b="Aristote",
+    )
+    assert isinstance(res, PromptComparisonResult)
+    assert res.prompt_a_label == "Python"
+    assert res.prompt_b_label == "Aristote"
+    assert res.num_layers > 0
+    assert res.experts_per_layer > 0
+    assert len(res.matrix_a) == res.num_layers
+    assert len(res.matrix_b) == res.num_layers
+    assert len(res.diff_matrix) == res.num_layers
+
+    # Check diff matrix values: diff = a - b
+    for l in range(res.num_layers):
+        for e in range(res.experts_per_layer):
+            diff_val = res.diff_matrix[l][e]
+            expected_diff = round(res.matrix_a[l][e] - res.matrix_b[l][e], 2)
+            assert diff_val == pytest.approx(expected_diff, abs=0.01)
+
+    # Global and per-layer JSD are between 0 and 1
+    assert 0.0 <= res.global_jsd <= 1.0
+    assert len(res.layer_jsd) == res.num_layers
+    for l_jsd in res.layer_jsd:
+        assert 0.0 <= l_jsd <= 1.0
+
+    # Top divergent experts
+    assert len(res.top_divergent_experts) > 0
+    for i in range(len(res.top_divergent_experts) - 1):
+        assert res.top_divergent_experts[i].abs_diff >= res.top_divergent_experts[i + 1].abs_diff
+
+    for exp in res.top_divergent_experts:
+        assert exp.abs_diff == pytest.approx(abs(exp.diff), abs=0.01)
+        if exp.diff > 0:
+            assert exp.dominant_prompt == "A"
+        elif exp.diff < 0:
+            assert exp.dominant_prompt == "B"
+        else:
+            assert exp.dominant_prompt == "neutral"
+
+
+def test_compare_prompts_identical_texts():
+    analyzer = MoEAnalyzer()
+    prompt = "Une analyse identique pour vérifier le cas limite"
+    res = analyzer.compare_prompts(prompt, prompt)
+    assert res.global_jsd == 0.0
+    for l_jsd in res.layer_jsd:
+        assert l_jsd == 0.0
+    for row in res.diff_matrix:
+        for cell in row:
+            assert cell == 0.0
+    for exp in res.top_divergent_experts:
+        assert exp.diff == 0.0
+        assert exp.abs_diff == 0.0
+        assert exp.dominant_prompt == "neutral"
+
+
+def test_compare_prompts_validation_errors():
+    analyzer = MoEAnalyzer()
+    with pytest.raises(ValueError, match="Le prompt A ne peut pas être vide"):
+        analyzer.compare_prompts("", "Texte valide")
+
+    with pytest.raises(ValueError, match="Le prompt B ne peut pas être vide"):
+        analyzer.compare_prompts("Texte valide", "   ")
+
+    with pytest.raises(ValueError, match="Le prompt A dépasse la limite"):
+        analyzer.compare_prompts("x" * 10001, "Texte valide")
+
+    with pytest.raises(ValueError, match="Le prompt B dépasse la limite"):
+        analyzer.compare_prompts("Texte valide", "x" * 10001)
 
 
 

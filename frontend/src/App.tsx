@@ -6,6 +6,7 @@ import { PromptAnalyzer } from './components/PromptAnalyzer';
 import { ModelManager } from './components/ModelManager';
 import { RoutingMetricsCard } from './components/RoutingMetricsCard';
 import { LayerExpertHeatmap } from './components/LayerExpertHeatmap';
+import { PromptComparator } from './components/PromptComparator';
 import {
   fetchDomains,
   fetchDomainAnalysis,
@@ -27,6 +28,7 @@ export const App: React.FC = () => {
   const [loadingModel, setLoadingModel] = useState<boolean>(false);
   const [loadingTargetId, setLoadingTargetId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'single' | 'compare'>('single');
 
   useEffect(() => {
     async function init() {
@@ -147,54 +149,114 @@ export const App: React.FC = () => {
         />
       )}
 
-      {Object.keys(domains).length > 0 && (
-        <DomainSelector
-          domains={domains}
-          selectedDomain={selectedDomain}
-          onSelectDomain={handleDomainSelect}
-        />
+      {/* Navigation Onglets */}
+      <div
+        role="tablist"
+        style={{
+          display: 'flex',
+          gap: '12px',
+          borderBottom: '2px solid #e2e8f0',
+          marginBottom: '20px',
+        }}
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'single'}
+          data-testid="tab-single-analysis"
+          onClick={() => setActiveTab('single')}
+          style={{
+            padding: '10px 18px',
+            fontSize: '15px',
+            fontWeight: 600,
+            border: 'none',
+            background: 'none',
+            cursor: 'pointer',
+            borderBottom: activeTab === 'single' ? '3px solid #2563eb' : '3px solid transparent',
+            color: activeTab === 'single' ? '#2563eb' : '#64748b',
+            marginBottom: '-2px',
+            transition: 'color 0.2s, border-color 0.2s',
+          }}
+        >
+          📊 Analyse par Domaine / Prompt
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'compare'}
+          data-testid="tab-prompt-comparison"
+          onClick={() => setActiveTab('compare')}
+          style={{
+            padding: '10px 18px',
+            fontSize: '15px',
+            fontWeight: 600,
+            border: 'none',
+            background: 'none',
+            cursor: 'pointer',
+            borderBottom: activeTab === 'compare' ? '3px solid #2563eb' : '3px solid transparent',
+            color: activeTab === 'compare' ? '#2563eb' : '#64748b',
+            marginBottom: '-2px',
+            transition: 'color 0.2s, border-color 0.2s',
+          }}
+        >
+          ⚖️ Comparateur de Prompts (Diff & JSD)
+        </button>
+      </div>
+
+      {activeTab === 'compare' ? (
+        <PromptComparator domains={domains} />
+      ) : (
+        <>
+          {Object.keys(domains).length > 0 && (
+            <DomainSelector
+              domains={domains}
+              selectedDomain={selectedDomain}
+              onSelectDomain={handleDomainSelect}
+            />
+          )}
+
+          <PromptAnalyzer
+            onAnalyzePrompt={handlePromptAnalyze}
+            loading={loading || loadingModel}
+            detectedDomains={analysis?.detected_domains}
+            domainsMap={domains}
+            tokenRouting={analysis?.token_routing}
+            isRealInference={analysis?.is_real_inference}
+            truncated={analysis?.truncated}
+            originalTokenCount={analysis?.original_token_count}
+            analyzedTokenCount={analysis?.analyzed_token_count}
+            numLayers={modelInfo?.num_layers || analysis?.layer_expert_matrix?.length || 4}
+          />
+
+          {loading && !analysis && (
+            <div style={{ padding: '30px', textAlign: 'center', color: '#2563eb', fontWeight: 'bold' }}>
+              ⏳ Inférence PyTorch en cours sur le modèle actif...
+            </div>
+          )}
+
+          {!loading && analysis && analysis.balance_metrics && (
+            <RoutingMetricsCard balanceMetrics={analysis.balance_metrics} />
+          )}
+
+          {!loading && analysis && analysis.layer_expert_matrix && (
+            <LayerExpertHeatmap
+              analysis={analysis}
+              numLayers={modelInfo?.num_layers || analysis.layer_expert_matrix.length}
+              expertsPerLayer={modelInfo?.experts_per_layer || analysis.layer_expert_matrix[0]?.length}
+            />
+          )}
+
+          {!loading && analysis && (
+            <MoENetworkGraph
+              analysis={analysis}
+              numLayers={modelInfo?.num_layers || 4}
+              expertsPerLayer={modelInfo?.experts_per_layer || 8}
+            />
+          )}
+
+          <ExpertTable analysis={analysis} loading={loading} />
+        </>
       )}
-
-      <PromptAnalyzer
-        onAnalyzePrompt={handlePromptAnalyze}
-        loading={loading || loadingModel}
-        detectedDomains={analysis?.detected_domains}
-        domainsMap={domains}
-        tokenRouting={analysis?.token_routing}
-        isRealInference={analysis?.is_real_inference}
-        truncated={analysis?.truncated}
-        originalTokenCount={analysis?.original_token_count}
-        analyzedTokenCount={analysis?.analyzed_token_count}
-        numLayers={modelInfo?.num_layers || analysis?.layer_expert_matrix?.length || 4}
-      />
-
-      {loading && !analysis && (
-        <div style={{ padding: '30px', textAlign: 'center', color: '#2563eb', fontWeight: 'bold' }}>
-          ⏳ Inférence PyTorch en cours sur le modèle actif...
-        </div>
-      )}
-
-      {!loading && analysis && analysis.balance_metrics && (
-        <RoutingMetricsCard balanceMetrics={analysis.balance_metrics} />
-      )}
-
-      {!loading && analysis && analysis.layer_expert_matrix && (
-        <LayerExpertHeatmap
-          analysis={analysis}
-          numLayers={modelInfo?.num_layers || analysis.layer_expert_matrix.length}
-          expertsPerLayer={modelInfo?.experts_per_layer || analysis.layer_expert_matrix[0]?.length}
-        />
-      )}
-
-      {!loading && analysis && (
-        <MoENetworkGraph
-          analysis={analysis}
-          numLayers={modelInfo?.num_layers || 4}
-          expertsPerLayer={modelInfo?.experts_per_layer || 8}
-        />
-      )}
-
-      <ExpertTable analysis={analysis} loading={loading} />
     </div>
   );
 };
