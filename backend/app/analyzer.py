@@ -268,6 +268,61 @@ def compute_layer_expert_matrix(
     return matrix
 
 
+def compute_jsd(p_dist: List[float], q_dist: List[float]) -> float:
+    """
+    Calcule la divergence de Jensen-Shannon (JSD) normalisée dans [0.0, 1.0]
+    entre deux distributions de probabilités discrètes en utilisant le logarithme base 2.
+    JSD(P || Q) = 0.5 * KL(P || M) + 0.5 * KL(Q || M) avec M = 0.5 * (P + Q).
+    """
+    if len(p_dist) != len(q_dist) or len(p_dist) == 0:
+        return 0.0
+
+    sum_p = sum(p_dist)
+    sum_q = sum(q_dist)
+    if sum_p <= 0.0 or sum_q <= 0.0:
+        return 0.0
+
+    p = [x / sum_p for x in p_dist]
+    q = [x / sum_q for x in q_dist]
+    m = [0.5 * (p[i] + q[i]) for i in range(len(p))]
+
+    kl_p = sum(p[i] * math.log2(p[i] / m[i]) for i in range(len(p)) if p[i] > 0.0 and m[i] > 0.0)
+    kl_q = sum(q[i] * math.log2(q[i] / m[i]) for i in range(len(q)) if q[i] > 0.0 and m[i] > 0.0)
+
+    jsd = 0.5 * (kl_p + kl_q)
+    return round(max(0.0, min(1.0, float(jsd))), 4)
+
+
+class DivergentExpert(BaseModel):
+    layer_id: int
+    expert_id: int
+    expert_name: str
+    activation_a: float
+    activation_b: float
+    diff: float
+    abs_diff: float
+    dominant_prompt: str
+
+
+class PromptComparisonResult(BaseModel):
+    prompt_a_label: str
+    prompt_b_label: str
+    matrix_a: List[List[float]]
+    matrix_b: List[List[float]]
+    diff_matrix: List[List[float]]
+    global_jsd: float
+    layer_jsd: List[float]
+    top_divergent_experts: List[DivergentExpert]
+    num_layers: int
+    experts_per_layer: int
+    model_id: str
+
+
+class PromptComparisonRequest(BaseModel):
+    prompt_a: str
+    prompt_b: str
+
+
 class DomainAnalysisResult(BaseModel):
     domain_id: str
     domain_name: str
@@ -800,3 +855,83 @@ class MoEAnalyzer:
                 balance_metrics=balance_metrics,
                 layer_expert_matrix=layer_expert_matrix,
             )
+
+    def compare_prompts(
+        self,
+        prompt_a_text: str,
+        prompt_b_text: str,
+        label_a: str = "Prompt A",
+        label_b: str = "Prompt B",
+    ) -> PromptComparisonResult:
+        with self._lock:
+            if not prompt_a_text or not prompt_a_text.strip():
+                raise ValueError("Le prompt A ne peut pas être vide")
+            if not prompt_b_text or not prompt_b_text.strip():
+                raise ValueError("Le prompt B ne peut pas être vide")
+
+            if len(prompt_a_text) > MAX_PROMPT_LENGTH:
+                raise ValueError(
+                    f"Le prompt A dépasse la limite maximale autorisée de {MAX_PROMPT_LENGTH} caractères"
+                )
+            if len(prompt_b_text) > MAX_PROMPT_LENGTH:
+                raise ValueError(
+                    f"Le prompt B dépasse la limite maximale autorisée de {MAX_PROMPT_LENGTH} caractères"
+                )
+
+            _, _, _, matrix_a = self._run_real_moe_inference(prompt_a_text.strip())
+            _, _, _, matrix_b = self._run_real_moe_inference(prompt_b_text.strip())
+
+            num_layers = len(matrix_a)
+            experts_per_layer = len(matrix_a[0]) if num_layers > 0 else 0
+
+            diff_matrix: List[List[float]] = []
+            divergent_experts: List[DivergentExpert] = []
+
+            for l in range(num_layers):
+                row_diff: List[float] = []
+                for e in range(experts_per_layer):
+                    val_a = matrix_a[l][e]
+                    val_b = matrix_b[l][e]
+                    diff = round(val_a - val_b, 2)
+                    row_diff.append(diff)
+
+                    abs_diff = round(abs(diff), 2)
+                    dominant = "A" if diff > 0 else ("B" if diff < 0 else "neutral")
+                    divergent_experts.append(
+                        DivergentExpert(
+                            layer_id=l,
+                            expert_id=e,
+                            expert_name=f"Layer {l} - Expert {e}",
+                            activation_a=val_a,
+                            activation_b=val_b,
+                            diff=diff,
+                            abs_diff=abs_diff,
+                            dominant_prompt=dominant,
+                        )
+                    )
+                diff_matrix.append(row_diff)
+
+            divergent_experts.sort(key=lambda x: x.abs_diff, reverse=True)
+
+            layer_jsd: List[float] = []
+            for l in range(num_layers):
+                layer_jsd.append(compute_jsd(matrix_a[l], matrix_b[l]))
+
+            flat_a = [v for row in matrix_a for v in row]
+            flat_b = [v for row in matrix_b for v in row]
+            global_jsd = compute_jsd(flat_a, flat_b)
+
+            return PromptComparisonResult(
+                prompt_a_label=label_a,
+                prompt_b_label=label_b,
+                matrix_a=matrix_a,
+                matrix_b=matrix_b,
+                diff_matrix=diff_matrix,
+                global_jsd=global_jsd,
+                layer_jsd=layer_jsd,
+                top_divergent_experts=divergent_experts[:16],
+                num_layers=num_layers,
+                experts_per_layer=experts_per_layer,
+                model_id=self.current_model_id,
+            )
+

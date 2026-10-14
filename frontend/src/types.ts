@@ -83,3 +83,34 @@ export interface DownloadProgressInfo {
   current_file: string;
   stage_message: string;
 }
+
+export interface DivergentExpert {
+  layer_id: number;
+  expert_id: number;
+  expert_name: string;
+  activation_a: number;
+  activation_b: number;
+  diff: number;
+  abs_diff: number;
+  dominant_prompt: 'A' | 'B' | 'neutral';
+}
+
+export interface PromptComparisonResult {
+  prompt_a_label: string;
+  prompt_b_label: string;
+  matrix_a: number[][];
+  matrix_b: number[][];
+  diff_matrix: number[][];
+  global_jsd: number;
+  layer_jsd: number[];
+  top_divergent_experts: DivergentExpert[];
+  num_layers: number;
+  experts_per_layer: number;
+  model_id: string;
+}
+
+export interface PromptComparisonRequest {
+  prompt_a: string;
+  prompt_b: string;
+}
+
