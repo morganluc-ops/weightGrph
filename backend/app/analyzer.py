@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_REAL_MOE_MODEL = "optimum-intel-internal-testing/tiny-random-qwen1.5-moe"
 MAX_PROMPT_LENGTH = 10_000
+MAX_ANALYZED_TOKENS = 128
 MODELS_DIR = (Path(__file__).resolve().parent.parent / "models").resolve()
 
 HF_MODEL_ID_PATTERN = re.compile(
@@ -114,11 +115,25 @@ class ExpertUsage(BaseModel):
     expert_name: str
 
 
+class TopKExpert(BaseModel):
+    expert_id: int
+    weight: float  # Pourcentage d'activation softmax (ex: 68.4%)
+
+
+class TokenLayerRouting(BaseModel):
+    layer_id: int
+    expert_id: int  # Expert dominant (Top-1) sur cette couche
+    confidence: float  # Confiance de l'expert dominant (%)
+    top_k: List[TopKExpert] = []  # Top-k experts sur cette couche
+
+
 class TokenRoutingInfo(BaseModel):
     token: str
-    layer_id: int
-    expert_id: int
-    confidence: float
+    layer_id: int = 0
+    expert_id: int = 0
+    confidence: float = 0.0
+    top_k: List[TopKExpert] = []
+    layers: Optional[List[TokenLayerRouting]] = None
 
 
 class LayerBalanceMetrics(BaseModel):
@@ -276,6 +291,9 @@ class DomainAnalysisResult(BaseModel):
     is_real_inference: bool = True
     model_id: str = DEFAULT_REAL_MOE_MODEL
     token_routing: Optional[List[TokenRoutingInfo]] = None
+    truncated: bool = False
+    original_token_count: int = 0
+    analyzed_token_count: int = 0
     balance_metrics: Optional[BalanceMetrics] = None
     layer_expert_matrix: Optional[List[List[float]]] = None
 
@@ -654,21 +672,47 @@ class MoEAnalyzer:
                 self.progress_state["stage_message"] = f"Erreur : {str(e)}"
                 raise ValueError(f"Impossible de charger le modèle MoE '{validated_id}': {str(e)}") from e
 
-    def _run_real_moe_inference(self, text: str) -> tuple[List[ExpertUsage], List[TokenRoutingInfo], BalanceMetrics, List[List[float]]]:
+    def _run_real_moe_inference(
+        self, text: str
+    ) -> tuple[List[ExpertUsage], List[TokenRoutingInfo], BalanceMetrics, List[List[float]], bool, int, int]:
         with self._lock:
-            inputs = self.hf_tokenizer(text, return_tensors="pt", truncation=True, max_length=128).to(self.hf_device)
+            # Calcul du nombre total de tokens avant troncature pour signaler l'écrêtage éventuel
+            full_encoded = self.hf_tokenizer.encode(text, add_special_tokens=True)
+            original_token_count = len(full_encoded)
+
+            inputs = self.hf_tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=MAX_ANALYZED_TOKENS,
+            ).to(self.hf_device)
             input_ids = inputs["input_ids"]
             tokens = self.hf_tokenizer.convert_ids_to_tokens(input_ids[0].tolist())
+            analyzed_token_count = len(tokens)
+            truncated = original_token_count > analyzed_token_count
 
             with torch.no_grad():
                 if getattr(self.hf_model.config, "is_encoder_decoder", False):
+                    # Pour les modèles Encoder-Decoder (ex: Google Switch), l'utilisation d'input_ids dans decoder_input_ids
+                    # introduisait un biais artificiel de teacher-forcing. Nous fournissons ici le token de démarrage standard
+                    # du décodeur pour respecter la dynamique d'inférence réelle.
+                    dec_start_id = getattr(self.hf_model.config, "decoder_start_token_id", None)
+                    if dec_start_id is None:
+                        dec_start_id = getattr(self.hf_model.config, "pad_token_id", 0) or 0
+                    decoder_input_ids = torch.full(
+                        (input_ids.shape[0], 1),
+                        dec_start_id,
+                        dtype=torch.long,
+                        device=self.hf_device,
+                    )
                     outputs = self.hf_model(
                         input_ids=input_ids,
-                        decoder_input_ids=input_ids,
+                        decoder_input_ids=decoder_input_ids,
                         output_router_logits=True,
                         return_dict=True,
                     )
                     raw_layers = []
+                    # Les couches MoE de l'encodeur analysent directement les tokens du prompt
                     if getattr(outputs, "encoder_router_logits", None):
                         raw_layers.extend(outputs.encoder_router_logits)
                     if getattr(outputs, "decoder_router_logits", None):
@@ -707,15 +751,18 @@ class MoEAnalyzer:
             self.model_meta["total_experts"] = num_moe_layers * num_experts
 
             expert_scores: Dict[tuple, float] = {}
-            token_routing: List[TokenRoutingInfo] = []
+            layer_topk_indices = []
+            layer_topk_vals = []
+            k = min(active_k, num_experts)
 
             for layer_idx, logits in enumerate(moe_layer_tensors):
                 logits_2d = logits[0] if logits.ndim == 3 else logits
                 probs = torch.softmax(logits_2d, dim=-1)
                 seq_len = probs.shape[0]
 
-                k = min(active_k, num_experts)
                 topk_vals, topk_indices = torch.topk(probs, k=k, dim=-1)
+                layer_topk_vals.append(topk_vals)
+                layer_topk_indices.append(topk_indices)
 
                 for tok_idx in range(seq_len):
                     for rank_i in range(k):
@@ -724,21 +771,62 @@ class MoEAnalyzer:
                         key = (layer_idx, exp_id)
                         expert_scores[key] = expert_scores.get(key, 0.0) + gate_prob
 
-                    if layer_idx == 0 and tok_idx < len(tokens):
-                        top1_exp = int(topk_indices[tok_idx, 0].item())
-                        top1_prob = float(topk_vals[tok_idx, 0].item())
-                        raw_tok = tokens[tok_idx]
-                        if isinstance(raw_tok, bytes):
-                            raw_tok = raw_tok.decode("utf-8", errors="replace")
-                        clean_tok = str(raw_tok).replace("▁", " ").replace("Ġ", " ").strip() or str(raw_tok)
-                        token_routing.append(
-                            TokenRoutingInfo(
-                                token=clean_tok,
-                                layer_id=0,
-                                expert_id=top1_exp,
-                                confidence=round(top1_prob * 100.0, 1),
+            token_routing: List[TokenRoutingInfo] = []
+
+            for tok_idx in range(len(tokens)):
+                raw_tok = tokens[tok_idx]
+                if isinstance(raw_tok, bytes):
+                    raw_tok = raw_tok.decode("utf-8", errors="replace")
+                clean_tok = str(raw_tok).replace("▁", " ").replace("Ġ", " ").strip() or str(raw_tok)
+
+                layers_routing: List[TokenLayerRouting] = []
+                for layer_idx in range(num_moe_layers):
+                    topk_i = layer_topk_indices[layer_idx]
+                    topk_v = layer_topk_vals[layer_idx]
+                    seq_len_l = topk_i.shape[0]
+
+                    if tok_idx < seq_len_l:
+                        layer_top_k: List[TopKExpert] = []
+                        for rank_i in range(k):
+                            exp_id = int(topk_i[tok_idx, rank_i].item())
+                            weight_val = round(float(topk_v[tok_idx, rank_i].item()) * 100.0, 1)
+                            layer_top_k.append(TopKExpert(expert_id=exp_id, weight=weight_val))
+
+                        dom_exp = layer_top_k[0].expert_id if layer_top_k else 0
+                        dom_conf = layer_top_k[0].weight if layer_top_k else 0.0
+                        layers_routing.append(
+                            TokenLayerRouting(
+                                layer_id=layer_idx,
+                                expert_id=dom_exp,
+                                confidence=dom_conf,
+                                top_k=layer_top_k,
                             )
                         )
+                    else:
+                        layers_routing.append(
+                            TokenLayerRouting(
+                                layer_id=layer_idx,
+                                expert_id=0,
+                                confidence=0.0,
+                                top_k=[],
+                            )
+                        )
+
+                l0_routing = layers_routing[0] if layers_routing else None
+                l0_exp = l0_routing.expert_id if l0_routing else 0
+                l0_conf = l0_routing.confidence if l0_routing else 0.0
+                l0_top_k = l0_routing.top_k if l0_routing else []
+
+                token_routing.append(
+                    TokenRoutingInfo(
+                        token=clean_tok,
+                        layer_id=0,
+                        expert_id=l0_exp,
+                        confidence=l0_conf,
+                        top_k=l0_top_k,
+                        layers=layers_routing,
+                    )
+                )
 
             total_mass = sum(expert_scores.values()) or 1.0
             experts_list: List[ExpertUsage] = []
@@ -758,7 +846,15 @@ class MoEAnalyzer:
             experts_list.sort(key=lambda x: x.usage_percentage, reverse=True)
             balance_metrics = compute_balance_metrics(expert_scores, num_moe_layers, num_experts)
             layer_expert_matrix = compute_layer_expert_matrix(expert_scores, num_moe_layers, num_experts)
-            return experts_list[:16], token_routing[:32], balance_metrics, layer_expert_matrix
+            return (
+                experts_list[:16],
+                token_routing,
+                balance_metrics,
+                layer_expert_matrix,
+                truncated,
+                original_token_count,
+                analyzed_token_count,
+            )
 
     def analyze_domain(self, domain_id: str) -> DomainAnalysisResult:
         with self._lock:
@@ -766,7 +862,15 @@ class MoEAnalyzer:
                 raise ValueError(f"Domaine inconnu: {domain_id}")
 
             sample_text = self.domain_corpus[domain_id]
-            experts_models, token_routing, balance_metrics, layer_expert_matrix = self._run_real_moe_inference(sample_text)
+            (
+                experts_models,
+                token_routing,
+                balance_metrics,
+                layer_expert_matrix,
+                truncated,
+                orig_count,
+                analyzed_count,
+            ) = self._run_real_moe_inference(sample_text)
             return DomainAnalysisResult(
                 domain_id=domain_id,
                 domain_name=self.domains_info[domain_id],
@@ -774,6 +878,9 @@ class MoEAnalyzer:
                 is_real_inference=True,
                 model_id=self.current_model_id,
                 token_routing=token_routing,
+                truncated=truncated,
+                original_token_count=orig_count,
+                analyzed_token_count=analyzed_count,
                 balance_metrics=balance_metrics,
                 layer_expert_matrix=layer_expert_matrix,
             )
@@ -788,7 +895,15 @@ class MoEAnalyzer:
                     f"Le prompt dépasse la limite maximale autorisée de {MAX_PROMPT_LENGTH} caractères"
                 )
 
-            experts_models, token_routing, balance_metrics, layer_expert_matrix = self._run_real_moe_inference(prompt.strip())
+            (
+                experts_models,
+                token_routing,
+                balance_metrics,
+                layer_expert_matrix,
+                truncated,
+                orig_count,
+                analyzed_count,
+            ) = self._run_real_moe_inference(prompt.strip())
             short_prompt = prompt.strip()[:60] + ("..." if len(prompt.strip()) > 60 else "")
             return DomainAnalysisResult(
                 domain_id="custom_prompt",
@@ -797,6 +912,9 @@ class MoEAnalyzer:
                 is_real_inference=True,
                 model_id=self.current_model_id,
                 token_routing=token_routing,
+                truncated=truncated,
+                original_token_count=orig_count,
+                analyzed_token_count=analyzed_count,
                 balance_metrics=balance_metrics,
                 layer_expert_matrix=layer_expert_matrix,
             )

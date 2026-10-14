@@ -176,4 +176,56 @@ describe('PromptAnalyzer Component', () => {
     fireEvent.click(screen.getByRole('button', { name: /Prévention & Calibrage/i }));
     expect(screen.getByRole('alert')).toHaveTextContent(/Note de prévention/i);
   });
+
+  it('renders token routing with all layers and truncation warning when props are provided', () => {
+    const mockRouting = [
+      {
+        token: 'async',
+        layer_id: 0,
+        expert_id: 2,
+        confidence: 88.0,
+        top_k: [{ expert_id: 2, weight: 88.0 }],
+        layers: [
+          {
+            layer_id: 0,
+            expert_id: 2,
+            confidence: 88.0,
+            top_k: [{ expert_id: 2, weight: 88.0 }],
+          },
+          {
+            layer_id: 1,
+            expert_id: 6,
+            confidence: 94.5,
+            top_k: [{ expert_id: 6, weight: 94.5 }],
+          },
+        ],
+      },
+    ];
+
+    render(
+      <PromptAnalyzer
+        onAnalyzePrompt={vi.fn()}
+        loading={false}
+        domainsMap={mockDomains}
+        tokenRouting={mockRouting}
+        numLayers={2}
+        truncated={true}
+        originalTokenCount={160}
+        analyzedTokenCount={128}
+        isRealInference={true}
+      />
+    );
+
+    expect(screen.getByTestId('truncation-warning')).toHaveTextContent(/128 premiers tokens sur 160 tokens/i);
+    expect(screen.getByTestId('token-routing-visualizer')).toBeInTheDocument();
+    expect(screen.getByText('async')).toBeInTheDocument();
+    expect(screen.getByText('E2')).toBeInTheDocument();
+
+    // Change layer to 1
+    const select = screen.getByTestId('layer-selector');
+    fireEvent.change(select, { target: { value: '1' } });
+    expect(screen.getByText('E6')).toBeInTheDocument();
+    expect(screen.getByText('94.5%')).toBeInTheDocument();
+  });
 });
+

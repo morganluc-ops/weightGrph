@@ -6,11 +6,25 @@ export interface ExpertUsage {
   expert_name: string;
 }
 
+export interface TopKExpert {
+  expert_id: number;
+  weight: number;
+}
+
+export interface TokenLayerRouting {
+  layer_id: number;
+  expert_id: number;
+  confidence: number;
+  top_k: TopKExpert[];
+}
+
 export interface TokenRoutingInfo {
   token: string;
   layer_id: number;
   expert_id: number;
   confidence: number;
+  top_k?: TopKExpert[];
+  layers?: TokenLayerRouting[];
 }
 
 export interface LayerBalanceMetrics {
@@ -39,6 +53,9 @@ export interface DomainAnalysisResult {
   is_real_inference?: boolean;
   model_id?: string;
   token_routing?: TokenRoutingInfo[];
+  truncated?: boolean;
+  original_token_count?: number;
+  analyzed_token_count?: number;
   balance_metrics?: BalanceMetrics;
   layer_expert_matrix?: number[][];
 }
