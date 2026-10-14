@@ -6,6 +6,7 @@ import * as api from '../api';
 
 vi.mock('../api', () => ({
   fetchPrompts: vi.fn(),
+  uploadPromptFile: vi.fn(),
 }));
 
 describe('PromptAnalyzer Component', () => {
@@ -22,21 +23,22 @@ describe('PromptAnalyzer Component', () => {
     ]);
   });
 
-  it('submits free-text prompt when typed into input field', async () => {
-    const handleAnalyze = vi.fn();
+  it('renders dropdown with prompts and does not render free-text input', async () => {
     render(
       <PromptAnalyzer
-        onAnalyzePrompt={handleAnalyze}
+        onAnalyzePrompt={vi.fn()}
         loading={false}
         domainsMap={mockDomains}
       />
     );
 
-    const input = screen.getByTestId('custom-prompt-input');
-    fireEvent.change(input, { target: { value: 'Algorithme de tri fusion en Python' } });
-    fireEvent.click(screen.getByRole('button', { name: /Analyser le Prompt/i }));
+    expect(screen.queryByTestId('custom-prompt-input')).not.toBeInTheDocument();
 
-    expect(handleAnalyze).toHaveBeenCalledWith('Algorithme de tri fusion en Python');
+    await waitFor(() => {
+      expect(screen.getByRole('combobox')).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /philosophie/i })).toBeInTheDocument();
+      expect(screen.getByRole('option', { name: /code/i })).toBeInTheDocument();
+    });
   });
 
   it('selects and submits predefined .md prompt from dropdown', async () => {
@@ -51,14 +53,114 @@ describe('PromptAnalyzer Component', () => {
 
     await waitFor(() => {
       expect(screen.getByRole('combobox')).toBeInTheDocument();
-      expect(screen.getByRole('option', { name: 'code' })).toBeInTheDocument();
     });
 
     const select = screen.getByRole('combobox');
     fireEvent.change(select, { target: { value: 'code.md' } });
-    fireEvent.click(screen.getByRole('button', { name: /Analyser le Prompt/i }));
+
+    const analyzeBtn = screen.getByRole('button', { name: /Analyser le Prompt/i });
+    expect(analyzeBtn).not.toBeDisabled();
+    fireEvent.click(analyzeBtn);
 
     expect(handleAnalyze).toHaveBeenCalledWith('code.md');
+  });
+
+  it('uploads a .md file, adds it to the dropdown, and selects it', async () => {
+    const handleAnalyze = vi.fn();
+    (api.uploadPromptFile as any).mockResolvedValue({
+      id: 'nouveau_prompt.md',
+      name: 'nouveau_prompt',
+    });
+
+    render(
+      <PromptAnalyzer
+        onAnalyzePrompt={handleAnalyze}
+        loading={false}
+        domainsMap={mockDomains}
+      />
+    );
+
+    const fileInput = screen.getByTestId('upload-prompt-input');
+    const file = new File(['# Analyse IA'], 'nouveau_prompt.md', { type: 'text/markdown' });
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(api.uploadPromptFile).toHaveBeenCalledWith(file);
+      expect(screen.getByRole('option', { name: /nouveau_prompt/i })).toBeInTheDocument();
+    });
+
+    const select = screen.getByRole('combobox') as HTMLSelectElement;
+    expect(select.value).toBe('nouveau_prompt.md');
+
+    fireEvent.click(screen.getByRole('button', { name: /Analyser le Prompt/i }));
+    expect(handleAnalyze).toHaveBeenCalledWith('nouveau_prompt.md');
+  });
+
+  it('shows an error when uploading a non-.md file', async () => {
+    render(
+      <PromptAnalyzer
+        onAnalyzePrompt={vi.fn()}
+        loading={false}
+        domainsMap={mockDomains}
+      />
+    );
+
+    const fileInput = screen.getByTestId('upload-prompt-input');
+    const invalidFile = new File(['not markdown'], 'script.py', { type: 'text/x-python' });
+
+    fireEvent.change(fileInput, { target: { files: [invalidFile] } });
+
+    expect(api.uploadPromptFile).not.toHaveBeenCalled();
+    expect(screen.getByText(/Seuls les fichiers \.md sont autorisés/i)).toBeInTheDocument();
+  });
+
+  it('accepts files with uppercase .MD extension', async () => {
+    (api.uploadPromptFile as any).mockResolvedValue({
+      id: 'UPPER.md',
+      name: 'UPPER',
+    });
+
+    render(
+      <PromptAnalyzer
+        onAnalyzePrompt={vi.fn()}
+        loading={false}
+        domainsMap={mockDomains}
+      />
+    );
+
+    const fileInput = screen.getByTestId('upload-prompt-input');
+    const file = new File(['# Content'], 'UPPER.MD', { type: 'text/markdown' });
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      expect(api.uploadPromptFile).toHaveBeenCalledWith(file);
+    });
+  });
+
+  it('displays API error message on upload conflict (409) or size limit (413)', async () => {
+    (api.uploadPromptFile as any).mockRejectedValue(
+      new Error("Un prompt nommé 'code.md' existe déjà")
+    );
+
+    render(
+      <PromptAnalyzer
+        onAnalyzePrompt={vi.fn()}
+        loading={false}
+        domainsMap={mockDomains}
+      />
+    );
+
+    const fileInput = screen.getByTestId('upload-prompt-input');
+    const file = new File(['# Code duplicate'], 'code.md', { type: 'text/markdown' });
+
+    fireEvent.change(fileInput, { target: { files: [file] } });
+
+    await waitFor(() => {
+      const errorEl = screen.getByTestId('upload-error');
+      expect(errorEl).toHaveTextContent("Un prompt nommé 'code.md' existe déjà");
+    });
   });
 
   it('toggles data quality warning alert when prevention button is clicked', async () => {
@@ -74,4 +176,3 @@ describe('PromptAnalyzer Component', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/Note de prévention/i);
   });
 });
-

@@ -70,6 +70,23 @@ export async function fetchPrompts(): Promise<PromptOption[]> {
   return response.json();
 }
 
+export async function uploadPromptFile(file: File): Promise<PromptOption> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE_URL}/prompts/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}));
+    throw new Error(err.detail || "Erreur lors de l'envoi du fichier de prompt");
+  }
+
+  return response.json();
+}
+
 export async function analyzeCustomPrompt(prompt: string): Promise<DomainAnalysisResult> {
   const response = await fetch(`${API_BASE_URL}/analyze-prompt`, {
     method: 'POST',

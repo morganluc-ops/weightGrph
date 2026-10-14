@@ -59,4 +59,25 @@ describe('Frontend API Client', () => {
     expect(result.domain_id).toBe('custom_prompt');
     expect(result.experts[0].usage_percentage).toBe(45);
   });
+
+  it('uploadPromptFile sends formData and returns prompt option', async () => {
+    const mockFile = new File(['# Prompt content'], 'test.md', { type: 'text/markdown' });
+    const mockResponse = { id: 'test.md', name: 'test' };
+
+    (fetch as any).mockResolvedValueOnce({
+      ok: true,
+      json: async () => mockResponse,
+    });
+
+    const { uploadPromptFile } = await import('./api');
+    const result = await uploadPromptFile(mockFile);
+    expect(result).toEqual(mockResponse);
+    expect(fetch).toHaveBeenCalledWith(
+      'http://127.0.0.1:8000/api/prompts/upload',
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.any(FormData),
+      })
+    );
+  });
 });
