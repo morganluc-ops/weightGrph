@@ -394,4 +394,94 @@ def test_upload_prompt_invalid_utf8():
     assert "UTF-8 valide" in response.json()["detail"]
 
 
+def test_analyze_prompt_oversized_text_rejected_400():
+    oversized = "A" * 10_001
+    response = client.post("/api/analyze-prompt", json={"prompt": oversized})
+    assert response.status_code == 400
+    assert "dépasse la limite autorisée" in response.json()["detail"] or "10000" in response.json()["detail"]
+
+
+def test_analyze_prompt_oversized_file_rejected_400():
+    filename = "temp_oversized_prompt.md"
+    file_path = PROMPTS_DIR / filename
+    try:
+        file_path.write_text("A" * 10_001, encoding="utf-8")
+        response = client.post("/api/analyze-prompt", json={"prompt": filename})
+        assert response.status_code == 400
+        assert "dépasse la limite autorisée" in response.json()["detail"]
+    finally:
+        if file_path.exists():
+            file_path.unlink()
+
+
+def test_load_model_path_traversal_rejected_400():
+    response = client.post("/api/model/load", json={"model_id": "../../etc/passwd"})
+    assert response.status_code == 400
+    assert "path traversal" in response.json()["detail"] or "invalide" in response.json()["detail"]
+
+
+def test_load_model_unauthorized_path_rejected_400():
+    response = client.post("/api/model/load", json={"model_id": "/etc/shadow"})
+    assert response.status_code == 400
+    assert "non autorisé ou introuvable" in response.json()["detail"] or "invalide" in response.json()["detail"]
+
+
+def test_load_model_invalid_hf_syntax_rejected_400():
+    response = client.post("/api/model/load", json={"model_id": "malicious repo with spaces!"})
+    assert response.status_code == 400
+    assert "invalide" in response.json()["detail"]
+
+
+def test_load_model_download_failure_propagates_400(monkeypatch):
+    import app.analyzer as analyzer_mod
+
+    def mock_download(*args, **kwargs):
+        raise RuntimeError("Hugging Face Hub repository not found: simulated 404")
+
+    monkeypatch.setattr(analyzer_mod, "snapshot_download", mock_download)
+
+    response = client.post("/api/model/load", json={"model_id": "nonexistent-org/nonexistent-model"})
+    assert response.status_code == 400
+    assert "Impossible de télécharger le modèle HuggingFace" in response.json()["detail"]
+    assert "simulated 404" in response.json()["detail"]
+
+
+def test_cors_headers_allowed_origin():
+    # Test that preflight OPTIONS request with allowed origin returns correct headers
+    response = client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://localhost:5173",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+    assert response.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_cors_headers_forbidden_origin():
+    # Test that preflight OPTIONS request with forbidden origin does NOT return allow origin
+    response = client.options(
+        "/api/health",
+        headers={
+            "Origin": "http://unauthorized-evil-site.com",
+            "Access-Control-Request-Method": "GET",
+        },
+    )
+    assert response.headers.get("access-control-allow-origin") != "http://unauthorized-evil-site.com"
+
+
+def test_cors_wildcard_logic():
+    import os
+    from app.main import get_cors_origins
+
+    with patch.dict(os.environ, {"CORS_ORIGINS": "*"}):
+        origins = get_cors_origins()
+        assert origins == ["*"]
+        allow_cred = "*" not in origins
+        assert allow_cred is False
+
+
+
 

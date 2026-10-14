@@ -1,13 +1,36 @@
 from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 import os
+import logging
 from pathlib import Path
 from typing import List
-from app.analyzer import MoEAnalyzer, PromptAnalysisRequest, LoadModelRequest
+from app.analyzer import (
+    MoEAnalyzer,
+    PromptAnalysisRequest,
+    LoadModelRequest,
+    MAX_PROMPT_LENGTH,
+)
+
+logger = logging.getLogger(__name__)
 
 PROMPTS_DIR = (Path(__file__).resolve().parent.parent / "prompts").resolve()
 MODELS_DIR = (Path(__file__).resolve().parent.parent / "models").resolve()
 MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+DEFAULT_CORS_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+def get_cors_origins() -> List[str]:
+    raw = os.getenv("CORS_ORIGINS")
+    if raw is not None:
+        origins = [o.strip() for o in raw.split(",") if o.strip()]
+        return origins if origins else DEFAULT_CORS_ORIGINS
+    return DEFAULT_CORS_ORIGINS
+
+cors_origins = get_cors_origins()
+allow_credentials = "*" not in cors_origins
 
 ALLOWED_MODEL_EXTENSIONS = {
     ".safetensors",
@@ -26,8 +49,8 @@ app = FastAPI(title="MoE Weight & Expert Analyzer API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=cors_origins,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -55,7 +78,12 @@ def load_model(payload: LoadModelRequest):
     try:
         return analyzer.load_model(payload.model_id)
     except ValueError as e:
+        logger.warning("Erreur lors du chargement du modèle '%s': %s", payload.model_id, e)
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error("Erreur inattendue lors du chargement du modèle '%s': %s", payload.model_id, e, exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Erreur interne lors du chargement du modèle: {str(e)}")
+
 
 @app.get("/api/analyze/{domain_id}")
 def analyze_domain(domain_id: str):
@@ -88,10 +116,21 @@ def analyze_prompt(payload: PromptAnalysisRequest):
             if prompt_file.is_file():
                 with open(prompt_file, "r", encoding="utf-8") as f:
                     content = f.read()
+                if len(content) > MAX_PROMPT_LENGTH:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Le contenu du fichier de prompt dépasse la limite autorisée ({MAX_PROMPT_LENGTH} caractères)",
+                    )
                 return analyzer.analyze_prompt(content)
             else:
                 # If a .md file was explicitly specified but does not exist, reject or treat as invalid file
                 raise HTTPException(status_code=400, detail=f"Fichier de prompt introuvable: {file_name}")
+
+        if len(payload.prompt) > MAX_PROMPT_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Le prompt dépasse la limite autorisée ({MAX_PROMPT_LENGTH} caractères)",
+            )
 
         return analyzer.analyze_prompt(payload.prompt)
     except ValueError as e:
