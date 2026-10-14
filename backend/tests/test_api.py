@@ -1,4 +1,5 @@
 import io
+from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
 from app.main import app, PROMPTS_DIR
@@ -167,20 +168,32 @@ def test_upload_prompt_sanitizes_path_traversal():
 
 def test_upload_prompt_case_insensitive_extension():
     filename = "test_upper.MD"
-    file_path = PROMPTS_DIR / filename
+    normalized_name = "test_upper.md"
+    file_path = PROMPTS_DIR / normalized_name
     if file_path.exists():
         file_path.unlink()
 
     try:
-        content = b"# Upper extension test"
+        content = b"# Upper extension test\nEcris une fonction mathematique."
         response = client.post(
             "/api/prompts/upload",
             files={"file": (filename, io.BytesIO(content), "text/markdown")},
         )
         assert response.status_code == 200
-        assert response.json()["id"] == filename
+        assert response.json()["id"] == normalized_name
         assert response.json()["name"] == "test_upper"
         assert file_path.exists()
+
+        # Tester l'analyse du prompt uploadé avec le nom normalisé
+        analyze_res1 = client.post("/api/analyze-prompt", json={"prompt": normalized_name})
+        assert analyze_res1.status_code == 200
+        assert analyze_res1.json()["domain_id"] == "custom_prompt"
+        assert len(analyze_res1.json()["experts"]) > 0
+
+        # Tester l'analyse du prompt avec l'extension .MD originale insensible à la casse
+        analyze_res2 = client.post("/api/analyze-prompt", json={"prompt": filename})
+        assert analyze_res2.status_code == 200
+        assert analyze_res2.json()["domain_id"] == "custom_prompt"
     finally:
         if file_path.exists():
             file_path.unlink()
@@ -193,6 +206,16 @@ def test_upload_prompt_conflict_duplicate():
     )
     assert response.status_code == 409
     assert "existe déjà" in response.json()["detail"]
+
+def test_upload_prompt_race_condition_file_exists_error():
+    filename = "race_test.md"
+    with patch("builtins.open", side_effect=FileExistsError):
+        response = client.post(
+            "/api/prompts/upload",
+            files={"file": (filename, io.BytesIO(b"# Content"), "text/markdown")},
+        )
+        assert response.status_code == 409
+        assert "existe déjà" in response.json()["detail"]
 
 def test_upload_prompt_payload_too_large():
     filename = "test_oversized.md"

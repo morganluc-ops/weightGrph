@@ -52,7 +52,7 @@ def analyze_domain(domain_id: str):
 def analyze_prompt(payload: PromptAnalysisRequest):
     try:
         # Check if the prompt is an id of a prompt file
-        if payload.prompt.endswith(".md"):
+        if payload.prompt.lower().endswith(".md"):
             # Extract only the file name to prevent path traversal
             file_name = Path(payload.prompt).name
             prompt_file = (PROMPTS_DIR / file_name).resolve()
@@ -62,6 +62,12 @@ def analyze_prompt(payload: PromptAnalysisRequest):
                 prompt_file.relative_to(PROMPTS_DIR)
             except ValueError:
                 raise HTTPException(status_code=400, detail="Accès non autorisé au fichier de prompt")
+
+            # Fallback to normalized lowercase .md if exact casing does not exist on disk (Linux)
+            if not prompt_file.is_file() and file_name.lower().endswith(".md"):
+                normalized_file = (PROMPTS_DIR / f"{file_name[:-3]}.md").resolve()
+                if normalized_file.is_file():
+                    prompt_file = normalized_file
 
             if prompt_file.is_file():
                 with open(prompt_file, "r", encoding="utf-8") as f:
@@ -91,9 +97,13 @@ def upload_prompt(file: UploadFile = File(...)):
     if not file.filename or not file.filename.lower().endswith(".md"):
         raise HTTPException(status_code=400, detail="Seuls les fichiers .md sont autorisés")
 
-    file_name = Path(file.filename).name
-    if not file_name or file_name.lower() == ".md":
+    raw_name = Path(file.filename).name
+    if not raw_name or raw_name.lower() == ".md":
         raise HTTPException(status_code=400, detail="Nom de fichier invalide")
+
+    # Normaliser systématiquement l'extension en .md minuscule
+    stem = raw_name[:-3] if raw_name.lower().endswith(".md") else raw_name
+    file_name = f"{stem}.md"
 
     PROMPTS_DIR.mkdir(parents=True, exist_ok=True)
     prompt_file = (PROMPTS_DIR / file_name).resolve()
@@ -131,15 +141,16 @@ def upload_prompt(file: UploadFile = File(...)):
                 detail="Le contenu du fichier n'est pas un texte UTF-8 valide"
             )
 
-        with open(prompt_file, "wb") as f:
+        with open(prompt_file, "xb") as f:
             f.write(content)
+    except FileExistsError:
+        raise HTTPException(status_code=409, detail=f"Un prompt nommé '{file_name}' existe déjà")
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Erreur lors de l'enregistrement du fichier: {str(e)}")
 
-    name = file_name[:-3] if file_name.lower().endswith(".md") else file_name
-    return {"id": file_name, "name": name}
+    return {"id": file_name, "name": stem}
 
 @app.get("/api/model/info")
 def get_model_info():

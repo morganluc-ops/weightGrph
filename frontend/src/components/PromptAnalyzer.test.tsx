@@ -117,7 +117,7 @@ describe('PromptAnalyzer Component', () => {
 
   it('accepts files with uppercase .MD extension', async () => {
     (api.uploadPromptFile as any).mockResolvedValue({
-      id: 'UPPER.MD',
+      id: 'UPPER.md',
       name: 'UPPER',
     });
 
