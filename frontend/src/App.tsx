@@ -4,6 +4,7 @@ import { ExpertTable } from './components/ExpertTable';
 import { MoENetworkGraph } from './components/MoENetworkGraph';
 import { PromptAnalyzer } from './components/PromptAnalyzer';
 import { ModelManager } from './components/ModelManager';
+import { RoutingMetricsCard } from './components/RoutingMetricsCard';
 import {
   fetchDomains,
   fetchDomainAnalysis,
@@ -166,6 +167,10 @@ export const App: React.FC = () => {
         <div style={{ padding: '30px', textAlign: 'center', color: '#2563eb', fontWeight: 'bold' }}>
           ⏳ Inférence PyTorch en cours sur le modèle actif...
         </div>
+      )}
+
+      {!loading && analysis && analysis.balance_metrics && (
+        <RoutingMetricsCard balanceMetrics={analysis.balance_metrics} />
       )}
 
       {!loading && analysis && (

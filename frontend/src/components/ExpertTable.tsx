@@ -32,9 +32,14 @@ export const ExpertTable: React.FC<ExpertTableProps> = ({ analysis, loading }) =
   return (
     <div style={{ marginTop: '20px', overflowX: 'auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
-        <h3 style={{ margin: 0 }}>
-          Répartition de l'utilisation des experts / poids pour : <span style={{ color: '#0066cc' }}>{analysis.domain_name}</span>
-        </h3>
+        <div>
+          <h3 style={{ margin: 0 }}>
+            Répartition de l'utilisation des experts / poids pour : <span style={{ color: '#0066cc' }}>{analysis.domain_name}</span>
+          </h3>
+          <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
+            L'utilisation (%) correspond à la part relative de masse de routage (somme des probabilités softmax de l'expert divisée par la masse totale du modèle).
+          </div>
+        </div>
         <button
           onClick={handleCopy}
           style={{
@@ -68,7 +73,12 @@ export const ExpertTable: React.FC<ExpertTableProps> = ({ analysis, loading }) =
             <th style={{ padding: '12px 15px' }}>ID Expert</th>
             <th style={{ padding: '12px 15px' }}>Nom / Spécialité de l'Expert</th>
             <th style={{ padding: '12px 15px' }}>Taille (Poids)</th>
-            <th style={{ padding: '12px 15px' }}>Utilisation (%)</th>
+            <th
+              style={{ padding: '12px 15px', cursor: 'help' }}
+              title="Calcul de l'utilisation : Somme des probabilités de routage (softmax gating) de l'expert sur tous les tokens / Total des probabilités de routage de tous les experts * 100"
+            >
+              Utilisation (%) ℹ️
+            </th>
           </tr>
         </thead>
         <tbody>
