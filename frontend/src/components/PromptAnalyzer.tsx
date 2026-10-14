@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DomainsMap, TokenRoutingInfo } from '../types';
+import { fetchPrompts, PromptOption } from '../api';
 
 interface PromptAnalyzerProps {
   onAnalyzePrompt: (prompt: string) => void;
@@ -10,12 +11,6 @@ interface PromptAnalyzerProps {
   isRealInference?: boolean;
 }
 
-const SAMPLE_PROMPTS = [
-  'Implémente un algorithme Python avec FastAPI pour diagonaliser une matrice',
-  'Quelle est la relation entre la conscience morale chez Kant et le libre arbitre ?',
-  'Explique l\'intrication quantique des particules et la structure de l\'ADN',
-];
-
 export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
   onAnalyzePrompt,
   loading,
@@ -25,12 +20,30 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
   isRealInference,
 }) => {
   const [promptText, setPromptText] = useState<string>('');
+  const [selectedPromptId, setSelectedPromptId] = useState<string>('');
+  const [prompts, setPrompts] = useState<PromptOption[]>([]);
   const [showWarning, setShowWarning] = useState<boolean>(false);
+
+  useEffect(() => {
+    fetchPrompts().then(data => {
+      setPrompts(data);
+    }).catch(err => {
+      console.error(err);
+    });
+  }, []);
+
+  const handleSelectPrompt = (id: string) => {
+    setSelectedPromptId(id);
+    if (id) {
+      setPromptText(id);
+    }
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!promptText.trim()) return;
-    onAnalyzePrompt(promptText.trim());
+    const targetPrompt = promptText.trim() || selectedPromptId.trim();
+    if (!targetPrompt) return;
+    onAnalyzePrompt(targetPrompt);
   };
 
   return (
@@ -83,12 +96,44 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
         </div>
       )}
 
+      {prompts.length > 0 && (
+        <div style={{ marginBottom: '10px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label htmlFor="prompt-selector" style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>
+            📂 Charger un prompt prédéfini (.md) :
+          </label>
+          <select
+            id="prompt-selector"
+            data-testid="prompt-selector"
+            value={selectedPromptId}
+            onChange={(e) => handleSelectPrompt(e.target.value)}
+            style={{
+              padding: '6px 10px',
+              fontSize: '13px',
+              borderRadius: '6px',
+              border: '1px solid #94a3b8',
+              backgroundColor: '#ffffff',
+            }}
+          >
+            <option value="">-- Choisir un prompt existant --</option>
+            {prompts.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
         <input
           id="custom-prompt-input"
+          data-testid="custom-prompt-input"
           type="text"
           value={promptText}
-          onChange={(e) => setPromptText(e.target.value)}
+          onChange={(e) => {
+            setPromptText(e.target.value);
+            if (selectedPromptId && e.target.value !== selectedPromptId) {
+              setSelectedPromptId('');
+            }
+          }}
           placeholder="Saisissez un prompt libre (ex: Écris un algorithme Python pour résoudre une équation différentielle)..."
           style={{
             flex: 1,
@@ -101,45 +146,20 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
         />
         <button
           type="submit"
-          disabled={loading || !promptText.trim()}
+          disabled={loading || (!promptText.trim() && !selectedPromptId.trim())}
           style={{
             padding: '9px 16px',
-            backgroundColor: loading || !promptText.trim() ? '#94a3b8' : '#2563eb',
+            backgroundColor: loading || (!promptText.trim() && !selectedPromptId.trim()) ? '#94a3b8' : '#2563eb',
             color: '#ffffff',
             border: 'none',
             borderRadius: '6px',
             fontWeight: 'bold',
-            cursor: loading || !promptText.trim() ? 'not-allowed' : 'pointer',
+            cursor: loading || (!promptText.trim() && !selectedPromptId.trim()) ? 'not-allowed' : 'pointer',
           }}
         >
           Analyser le Prompt
         </button>
       </form>
-
-      <div style={{ marginTop: '10px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
-        <span style={{ fontSize: '12px', color: '#64748b' }}>Exemples :</span>
-        {SAMPLE_PROMPTS.map((sample, idx) => (
-          <button
-            key={idx}
-            type="button"
-            onClick={() => {
-              setPromptText(sample);
-              onAnalyzePrompt(sample);
-            }}
-            style={{
-              fontSize: '12px',
-              padding: '4px 8px',
-              backgroundColor: '#e2e8f0',
-              color: '#334155',
-              border: 'none',
-              borderRadius: '4px',
-              cursor: 'pointer',
-            }}
-          >
-            Exemple #{idx + 1}
-          </button>
-        ))}
-      </div>
 
       {detectedDomains && Object.keys(detectedDomains).length > 0 && (
         <div style={{ marginTop: '12px', display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>

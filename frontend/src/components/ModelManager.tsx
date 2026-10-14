@@ -128,17 +128,38 @@ export const ModelManager: React.FC<ModelManagerProps> = ({
           type="text"
           value={customHuggingFaceId}
           onChange={(e) => setCustomHuggingFaceId(e.target.value)}
-          placeholder="Ou ID HuggingFace personnalisé (ex: google/switch-base-8)..."
+          placeholder="Ou ID HuggingFace personnalisé / chemin local..."
           disabled={loadingModel}
           style={{
             flex: 1,
-            minWidth: '220px',
+            minWidth: '260px',
             padding: '8px 12px',
             fontSize: '13px',
             borderRadius: '6px',
             border: '1px solid #94a3b8',
           }}
         />
+
+        <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+          <div
+            title="1. Placez les dossiers du modèle sur le serveur. 2. Entrez le chemin absolu vers le dossier (ex: /chemin/vers/le/modele)."
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '24px',
+              height: '24px',
+              borderRadius: '50%',
+              backgroundColor: '#e2e8f0',
+              color: '#475569',
+              fontWeight: 'bold',
+              fontSize: '14px',
+              cursor: 'help',
+            }}
+          >
+            ?
+          </div>
+        </div>
 
         <button
           type="button"

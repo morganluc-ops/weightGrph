@@ -76,3 +76,25 @@ def test_load_real_model_endpoint():
     assert response.status_code == 200
     assert response.json()["model_id"] == DEFAULT_REAL_MOE_MODEL
     assert response.json()["is_real_model"] is True
+
+def test_get_prompts():
+    response = client.get("/api/prompts")
+    assert response.status_code == 200
+    prompts = response.json()
+    assert isinstance(prompts, list)
+    assert len(prompts) >= 2
+    assert any(p["id"] == "philosophie.md" for p in prompts)
+    assert any(p["id"] == "code.md" for p in prompts)
+
+def test_analyze_prompt_with_md_file():
+    response = client.post("/api/analyze-prompt", json={"prompt": "philosophie.md"})
+    assert response.status_code == 200
+    data = response.json()
+    assert data["domain_id"] == "custom_prompt"
+    assert len(data["experts"]) > 0
+
+def test_analyze_prompt_path_traversal_rejected():
+    response = client.post("/api/analyze-prompt", json={"prompt": "../../etc/passwd.md"})
+    assert response.status_code == 400
+    assert "Fichier de prompt introuvable" in response.json()["detail"] or "Accès non autorisé" in response.json()["detail"]
+

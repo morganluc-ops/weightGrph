@@ -21,3 +21,9 @@ __pycache__/
 # Build outputs
 dist/
 build/
+
+# Test artifacts and screenshots
+test-results/
+**/test-results/
+*.png
+
