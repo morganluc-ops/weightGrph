@@ -1,6 +1,8 @@
+import io
+from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
-from app.main import app
+from app.main import app, PROMPTS_DIR
 from app.analyzer import DEFAULT_REAL_MOE_MODEL
 
 client = TestClient(app)
@@ -97,4 +99,144 @@ def test_analyze_prompt_path_traversal_rejected():
     response = client.post("/api/analyze-prompt", json={"prompt": "../../etc/passwd.md"})
     assert response.status_code == 400
     assert "Fichier de prompt introuvable" in response.json()["detail"] or "Accès non autorisé" in response.json()["detail"]
+
+def test_upload_prompt_success():
+    filename = "test_custom_upload.md"
+    file_path = PROMPTS_DIR / filename
+    if file_path.exists():
+        file_path.unlink()
+
+    try:
+        content = b"# Mon super prompt d'analyse\nExplique le fonctionnement des MoE."
+        response = client.post(
+            "/api/prompts/upload",
+            files={"file": (filename, io.BytesIO(content), "text/markdown")},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == filename
+        assert data["name"] == "test_custom_upload"
+        assert file_path.exists()
+        assert file_path.read_text(encoding="utf-8") == content.decode("utf-8")
+
+        # Vérifier qu'il est maintenant dans la liste
+        list_res = client.get("/api/prompts")
+        assert any(p["id"] == filename for p in list_res.json())
+
+        # Vérifier qu'on peut l'analyser
+        analyze_res = client.post("/api/analyze-prompt", json={"prompt": filename})
+        assert analyze_res.status_code == 200
+    finally:
+        if file_path.exists():
+            file_path.unlink()
+
+def test_upload_prompt_invalid_extension():
+    response = client.post(
+        "/api/prompts/upload",
+        files={"file": ("script.py", io.BytesIO(b"print('hello')"), "text/x-python")},
+    )
+    assert response.status_code == 400
+    assert "Seuls les fichiers .md sont autorisés" in response.json()["detail"]
+
+def test_upload_prompt_empty_filename():
+    response = client.post(
+        "/api/prompts/upload",
+        files={"file": (".md", io.BytesIO(b"content"), "text/markdown")},
+    )
+    assert response.status_code == 400
+    assert "Nom de fichier invalide" in response.json()["detail"]
+
+def test_upload_prompt_sanitizes_path_traversal():
+    filename = "test_traversal_clean.md"
+    file_path = PROMPTS_DIR / filename
+    if file_path.exists():
+        file_path.unlink()
+
+    try:
+        traversal_name = f"../../sub/{filename}"
+        response = client.post(
+            "/api/prompts/upload",
+            files={"file": (traversal_name, io.BytesIO(b"# Traversal"), "text/markdown")},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id"] == filename
+        assert file_path.exists()
+    finally:
+        if file_path.exists():
+            file_path.unlink()
+
+def test_upload_prompt_case_insensitive_extension():
+    filename = "test_upper.MD"
+    normalized_name = "test_upper.md"
+    file_path = PROMPTS_DIR / normalized_name
+    if file_path.exists():
+        file_path.unlink()
+
+    try:
+        content = b"# Upper extension test\nEcris une fonction mathematique."
+        response = client.post(
+            "/api/prompts/upload",
+            files={"file": (filename, io.BytesIO(content), "text/markdown")},
+        )
+        assert response.status_code == 200
+        assert response.json()["id"] == normalized_name
+        assert response.json()["name"] == "test_upper"
+        assert file_path.exists()
+
+        # Tester l'analyse du prompt uploadé avec le nom normalisé
+        analyze_res1 = client.post("/api/analyze-prompt", json={"prompt": normalized_name})
+        assert analyze_res1.status_code == 200
+        assert analyze_res1.json()["domain_id"] == "custom_prompt"
+        assert len(analyze_res1.json()["experts"]) > 0
+
+        # Tester l'analyse du prompt avec l'extension .MD originale insensible à la casse
+        analyze_res2 = client.post("/api/analyze-prompt", json={"prompt": filename})
+        assert analyze_res2.status_code == 200
+        assert analyze_res2.json()["domain_id"] == "custom_prompt"
+    finally:
+        if file_path.exists():
+            file_path.unlink()
+
+def test_upload_prompt_conflict_duplicate():
+    # 'code.md' exists in PROMPTS_DIR
+    response = client.post(
+        "/api/prompts/upload",
+        files={"file": ("code.md", io.BytesIO(b"# Duplicate code"), "text/markdown")},
+    )
+    assert response.status_code == 409
+    assert "existe déjà" in response.json()["detail"]
+
+def test_upload_prompt_race_condition_file_exists_error():
+    filename = "race_test.md"
+    with patch("builtins.open", side_effect=FileExistsError):
+        response = client.post(
+            "/api/prompts/upload",
+            files={"file": (filename, io.BytesIO(b"# Content"), "text/markdown")},
+        )
+        assert response.status_code == 409
+        assert "existe déjà" in response.json()["detail"]
+
+def test_upload_prompt_payload_too_large():
+    filename = "test_oversized.md"
+    # Create content > 1 Mo (e.g. 1 Mo + 1024 bytes)
+    oversized_content = b"A" * (1 * 1024 * 1024 + 1024)
+    response = client.post(
+        "/api/prompts/upload",
+        files={"file": (filename, io.BytesIO(oversized_content), "text/markdown")},
+    )
+    assert response.status_code == 413
+    assert "dépassé" in response.json()["detail"] or "1 Mo" in response.json()["detail"]
+
+def test_upload_prompt_invalid_utf8():
+    filename = "test_invalid_utf8.md"
+    invalid_content = b"\x80\x81\xff\xfe"
+    response = client.post(
+        "/api/prompts/upload",
+        files={"file": (filename, io.BytesIO(invalid_content), "text/markdown")},
+    )
+    assert response.status_code == 400
+    assert "UTF-8 valide" in response.json()["detail"]
+
+
 
