@@ -5,6 +5,7 @@ os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
 import time
+import math
 import torch
 from transformers import AutoTokenizer, AutoConfig, AutoModelForSeq2SeqLM, AutoModelForCausalLM
 from huggingface_hub import HfApi, snapshot_download
@@ -15,7 +16,7 @@ DEFAULT_REAL_MOE_MODEL = "optimum-intel-internal-testing/tiny-random-qwen1.5-moe
 class ExpertUsage(BaseModel):
     layer_id: int
     expert_id: int
-    usage_percentage: float
+    usage_percentage: float  # Pourcentage de charge globale captée par cet expert par rapport à l'ensemble du modèle (somme des probabilités de routage softmax sur tous les tokens / total des probabilités de tous les experts * 100)
     num_params: str
     expert_name: str
 
@@ -27,6 +28,127 @@ class TokenRoutingInfo(BaseModel):
     confidence: float
 
 
+class LayerBalanceMetrics(BaseModel):
+    layer_id: int
+    entropy: float  # Entropie de Shannon normalisée entre 0.0 et 1.0 pour cette couche
+    gini_coefficient: float  # Indice de Gini discret normalisé [0.0, 1.0] pour cette couche
+    dead_experts_count: int  # Nombre d'experts ayant reçu 0 activation dans cette couche
+    total_experts: int  # Nombre total d'experts dans cette couche
+    max_expert_load_share: float  # Part de charge captée par l'expert le plus actif de la couche (en %)
+
+
+class BalanceMetrics(BaseModel):
+    entropy: float  # Entropie de Shannon normalisée globale [0.0, 1.0] sur tous les experts du modèle
+    gini_coefficient: float  # Indice de Gini global [0.0, 1.0] sur l'ensemble des experts du modèle
+    dead_experts_count: int  # Nombre total d'experts avec 0 activation sur l'ensemble du modèle
+    total_experts: int  # Nombre total d'experts du modèle (num_layers * experts_per_layer)
+    max_expert_load_share: float  # Part de charge captée par l'expert le plus sollicité du modèle (en %)
+    layers_metrics: List[LayerBalanceMetrics] = []
+
+
+def compute_balance_metrics(
+    expert_scores: Dict[tuple, float],
+    num_layers: int,
+    experts_per_layer: int,
+) -> BalanceMetrics:
+    """
+    Calcule les métriques d'équilibrage du routage MoE :
+    - Entropie normalisée H / ln(N) : 1.0 = distribution parfaitement uniforme, 0.0 = effondrement sur 1 expert.
+    - Coefficient de Gini discret normalisé : 0.0 = égalité parfaite, 1.0 = concentration maximale sur 1 expert.
+    - Experts morts : nombre d'experts n'ayant reçu aucune activation (charge = 0).
+    - Part de charge de l'expert le plus sollicité : pourcentage capté par l'expert le plus actif.
+    """
+    if num_layers <= 0 or experts_per_layer <= 0:
+        return BalanceMetrics(
+            entropy=0.0,
+            gini_coefficient=0.0,
+            dead_experts_count=0,
+            total_experts=0,
+            max_expert_load_share=0.0,
+            layers_metrics=[],
+        )
+
+    layers_metrics: List[LayerBalanceMetrics] = []
+
+    # 1. Calcul des métriques par couche
+    for l in range(num_layers):
+        layer_masses = [expert_scores.get((l, e), 0.0) for e in range(experts_per_layer)]
+        tot_layer = sum(layer_masses)
+        dead_l = sum(1 for m in layer_masses if m <= 0.0)
+
+        if tot_layer > 0 and experts_per_layer > 1:
+            # Entropie normalisée de Shannon pour la couche
+            p_layer = [m / tot_layer for m in layer_masses if m > 0.0]
+            h_layer = -sum(p * math.log(p) for p in p_layer)
+            h_norm_layer = min(1.0, max(0.0, h_layer / math.log(experts_per_layer)))
+
+            # Coefficient de Gini discret normalisé
+            sorted_m = sorted(layer_masses)
+            gini_num = sum((2 * (i + 1) - experts_per_layer - 1) * sorted_m[i] for i in range(experts_per_layer))
+            gini_den = (experts_per_layer - 1) * tot_layer
+            gini_layer = min(1.0, max(0.0, gini_num / gini_den)) if gini_den > 0 else 0.0
+
+            max_share_layer = (max(layer_masses) / tot_layer) * 100.0
+        elif experts_per_layer == 1:
+            h_norm_layer = 1.0
+            gini_layer = 0.0
+            max_share_layer = 100.0
+        else:
+            h_norm_layer = 0.0
+            gini_layer = 0.0
+            max_share_layer = 0.0
+
+        layers_metrics.append(
+            LayerBalanceMetrics(
+                layer_id=l,
+                entropy=round(h_norm_layer, 4),
+                gini_coefficient=round(gini_layer, 4),
+                dead_experts_count=dead_l,
+                total_experts=experts_per_layer,
+                max_expert_load_share=round(max_share_layer, 2),
+            )
+        )
+
+    # 2. Calcul des métriques globales sur tous les experts du modèle
+    all_masses = [
+        expert_scores.get((l, e), 0.0)
+        for l in range(num_layers)
+        for e in range(experts_per_layer)
+    ]
+    total_global_mass = sum(all_masses)
+    total_experts = num_layers * experts_per_layer
+    total_dead = sum(1 for m in all_masses if m <= 0.0)
+
+    if total_global_mass > 0 and total_experts > 1:
+        p_global = [m / total_global_mass for m in all_masses if m > 0.0]
+        h_global = -sum(p * math.log(p) for p in p_global)
+        h_norm_global = min(1.0, max(0.0, h_global / math.log(total_experts)))
+
+        sorted_all = sorted(all_masses)
+        gini_num = sum((2 * (i + 1) - total_experts - 1) * sorted_all[i] for i in range(total_experts))
+        gini_den = (total_experts - 1) * total_global_mass
+        gini_global = min(1.0, max(0.0, gini_num / gini_den)) if gini_den > 0 else 0.0
+
+        max_share_global = (max(all_masses) / total_global_mass) * 100.0
+    elif total_experts == 1:
+        h_norm_global = 1.0
+        gini_global = 0.0
+        max_share_global = 100.0
+    else:
+        h_norm_global = 0.0
+        gini_global = 0.0
+        max_share_global = 0.0
+
+    return BalanceMetrics(
+        entropy=round(h_norm_global, 4),
+        gini_coefficient=round(gini_global, 4),
+        dead_experts_count=total_dead,
+        total_experts=total_experts,
+        max_expert_load_share=round(max_share_global, 2),
+        layers_metrics=layers_metrics,
+    )
+
+
 class DomainAnalysisResult(BaseModel):
     domain_id: str
     domain_name: str
@@ -35,6 +157,7 @@ class DomainAnalysisResult(BaseModel):
     is_real_inference: bool = True
     model_id: str = DEFAULT_REAL_MOE_MODEL
     token_routing: Optional[List[TokenRoutingInfo]] = None
+    balance_metrics: Optional[BalanceMetrics] = None
 
 
 class PromptAnalysisRequest(BaseModel):
@@ -384,7 +507,7 @@ class MoEAnalyzer:
             progress_ref["stage_message"] = f"Erreur : {str(e)}"
             raise ValueError(f"Impossible de charger le modèle MoE '{model_id}': {str(e)}")
 
-    def _run_real_moe_inference(self, text: str) -> tuple[List[ExpertUsage], List[TokenRoutingInfo]]:
+    def _run_real_moe_inference(self, text: str) -> tuple[List[ExpertUsage], List[TokenRoutingInfo], BalanceMetrics]:
         inputs = self.hf_tokenizer(text, return_tensors="pt", truncation=True, max_length=128).to(self.hf_device)
         input_ids = inputs["input_ids"]
         tokens = self.hf_tokenizer.convert_ids_to_tokens(input_ids[0].tolist())
@@ -485,14 +608,15 @@ class MoEAnalyzer:
                 )
 
         experts_list.sort(key=lambda x: x.usage_percentage, reverse=True)
-        return experts_list[:16], token_routing[:32]
+        balance_metrics = compute_balance_metrics(expert_scores, num_moe_layers, num_experts)
+        return experts_list[:16], token_routing[:32], balance_metrics
 
     def analyze_domain(self, domain_id: str) -> DomainAnalysisResult:
         if domain_id not in self.domains_info:
             raise ValueError(f"Domaine inconnu: {domain_id}")
 
         sample_text = self.domain_corpus[domain_id]
-        experts_models, token_routing = self._run_real_moe_inference(sample_text)
+        experts_models, token_routing, balance_metrics = self._run_real_moe_inference(sample_text)
         return DomainAnalysisResult(
             domain_id=domain_id,
             domain_name=self.domains_info[domain_id],
@@ -500,13 +624,14 @@ class MoEAnalyzer:
             is_real_inference=True,
             model_id=self.current_model_id,
             token_routing=token_routing,
+            balance_metrics=balance_metrics,
         )
 
     def analyze_prompt(self, prompt: str) -> DomainAnalysisResult:
         if not prompt or not prompt.strip():
             raise ValueError("Le prompt ne peut pas être vide")
 
-        experts_models, token_routing = self._run_real_moe_inference(prompt.strip())
+        experts_models, token_routing, balance_metrics = self._run_real_moe_inference(prompt.strip())
         short_prompt = prompt.strip()[:60] + ("..." if len(prompt.strip()) > 60 else "")
         return DomainAnalysisResult(
             domain_id="custom_prompt",
@@ -515,4 +640,5 @@ class MoEAnalyzer:
             is_real_inference=True,
             model_id=self.current_model_id,
             token_routing=token_routing,
+            balance_metrics=balance_metrics,
         )

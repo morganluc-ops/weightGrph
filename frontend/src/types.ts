@@ -13,6 +13,24 @@ export interface TokenRoutingInfo {
   confidence: number;
 }
 
+export interface LayerBalanceMetrics {
+  layer_id: number;
+  entropy: number;
+  gini_coefficient: number;
+  dead_experts_count: number;
+  total_experts: number;
+  max_expert_load_share: number;
+}
+
+export interface BalanceMetrics {
+  entropy: number;
+  gini_coefficient: number;
+  dead_experts_count: number;
+  total_experts: number;
+  max_expert_load_share: number;
+  layers_metrics: LayerBalanceMetrics[];
+}
+
 export interface DomainAnalysisResult {
   domain_id: string;
   domain_name: string;
@@ -21,6 +39,7 @@ export interface DomainAnalysisResult {
   is_real_inference?: boolean;
   model_id?: string;
   token_routing?: TokenRoutingInfo[];
+  balance_metrics?: BalanceMetrics;
 }
 
 export interface DomainsMap {

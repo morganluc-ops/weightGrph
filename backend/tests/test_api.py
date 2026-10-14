@@ -1,4 +1,4 @@
-﻿import io
+import io
 from unittest.mock import patch
 import pytest
 from fastapi.testclient import TestClient
@@ -27,6 +27,15 @@ def test_analyze_domain():
     assert data["is_real_inference"] is True
     assert "experts" in data
     assert len(data["experts"]) > 0
+    assert "balance_metrics" in data
+    bm = data["balance_metrics"]
+    assert "entropy" in bm
+    assert "gini_coefficient" in bm
+    assert "dead_experts_count" in bm
+    assert "total_experts" in bm
+    assert "max_expert_load_share" in bm
+    assert "layers_metrics" in bm
+    assert len(bm["layers_metrics"]) == 4
 
     experts = data["experts"]
     for i in range(len(experts) - 1):
@@ -53,6 +62,9 @@ def test_analyze_prompt_endpoint():
     assert data["is_real_inference"] is True
     assert len(data["experts"]) > 0
     assert len(data["token_routing"]) > 0
+    assert "balance_metrics" in data
+    assert data["balance_metrics"]["total_experts"] == 32
+    assert 0.0 <= data["balance_metrics"]["entropy"] <= 1.0
 
 def test_analyze_empty_prompt_endpoint():
     response = client.post("/api/analyze-prompt", json={"prompt": ""})
