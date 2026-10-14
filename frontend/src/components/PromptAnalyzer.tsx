@@ -19,25 +19,31 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
   tokenRouting,
   isRealInference,
 }) => {
-  const [promptId, setPromptId] = useState<string>('');
+  const [promptText, setPromptText] = useState<string>('');
+  const [selectedPromptId, setSelectedPromptId] = useState<string>('');
   const [prompts, setPrompts] = useState<PromptOption[]>([]);
   const [showWarning, setShowWarning] = useState<boolean>(false);
 
   useEffect(() => {
     fetchPrompts().then(data => {
       setPrompts(data);
-      if (data.length > 0) {
-        setPromptId(data[0].id);
-      }
     }).catch(err => {
       console.error(err);
     });
   }, []);
 
+  const handleSelectPrompt = (id: string) => {
+    setSelectedPromptId(id);
+    if (id) {
+      setPromptText(id);
+    }
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!promptId.trim()) return;
-    onAnalyzePrompt(promptId.trim());
+    const targetPrompt = promptText.trim() || selectedPromptId.trim();
+    if (!targetPrompt) return;
+    onAnalyzePrompt(targetPrompt);
   };
 
   return (
@@ -90,11 +96,45 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
         </div>
       )}
 
+      {prompts.length > 0 && (
+        <div style={{ marginBottom: '10px', display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label htmlFor="prompt-selector" style={{ fontSize: '13px', fontWeight: 'bold', color: '#475569' }}>
+            📂 Charger un prompt prédéfini (.md) :
+          </label>
+          <select
+            id="prompt-selector"
+            data-testid="prompt-selector"
+            value={selectedPromptId}
+            onChange={(e) => handleSelectPrompt(e.target.value)}
+            style={{
+              padding: '6px 10px',
+              fontSize: '13px',
+              borderRadius: '6px',
+              border: '1px solid #94a3b8',
+              backgroundColor: '#ffffff',
+            }}
+          >
+            <option value="">-- Choisir un prompt existant --</option>
+            {prompts.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit} style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-        <select
+        <input
           id="custom-prompt-input"
-          value={promptId}
-          onChange={(e) => setPromptId(e.target.value)}
+          data-testid="custom-prompt-input"
+          type="text"
+          value={promptText}
+          onChange={(e) => {
+            setPromptText(e.target.value);
+            if (selectedPromptId && e.target.value !== selectedPromptId) {
+              setSelectedPromptId('');
+            }
+          }}
+          placeholder="Saisissez un prompt libre (ex: Écris un algorithme Python pour résoudre une équation différentielle)..."
           style={{
             flex: 1,
             minWidth: '260px',
@@ -103,22 +143,18 @@ export const PromptAnalyzer: React.FC<PromptAnalyzerProps> = ({
             borderRadius: '6px',
             border: '1px solid #94a3b8',
           }}
-        >
-          {prompts.map(p => (
-            <option key={p.id} value={p.id}>{p.name}</option>
-          ))}
-        </select>
+        />
         <button
           type="submit"
-          disabled={loading || !promptId.trim() || prompts.length === 0}
+          disabled={loading || (!promptText.trim() && !selectedPromptId.trim())}
           style={{
             padding: '9px 16px',
-            backgroundColor: loading || !promptId.trim() || prompts.length === 0 ? '#94a3b8' : '#2563eb',
+            backgroundColor: loading || (!promptText.trim() && !selectedPromptId.trim()) ? '#94a3b8' : '#2563eb',
             color: '#ffffff',
             border: 'none',
             borderRadius: '6px',
             fontWeight: 'bold',
-            cursor: loading || !promptId.trim() || prompts.length === 0 ? 'not-allowed' : 'pointer',
+            cursor: loading || (!promptText.trim() && !selectedPromptId.trim()) ? 'not-allowed' : 'pointer',
           }}
         >
           Analyser le Prompt

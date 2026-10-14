@@ -1,6 +1,10 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+import os
+from pathlib import Path
 from app.analyzer import MoEAnalyzer, PromptAnalysisRequest, LoadModelRequest
+
+PROMPTS_DIR = (Path(__file__).resolve().parent.parent / "prompts").resolve()
 
 app = FastAPI(title="MoE Weight & Expert Analyzer API", version="2.0.0")
 
@@ -47,15 +51,25 @@ def analyze_domain(domain_id: str):
 @app.post("/api/analyze-prompt")
 def analyze_prompt(payload: PromptAnalysisRequest):
     try:
-        import os
-        prompts_dir = "prompts"
         # Check if the prompt is an id of a prompt file
         if payload.prompt.endswith(".md"):
-            prompt_file = os.path.join(prompts_dir, payload.prompt)
-            if os.path.exists(prompt_file):
+            # Extract only the file name to prevent path traversal
+            file_name = Path(payload.prompt).name
+            prompt_file = (PROMPTS_DIR / file_name).resolve()
+
+            # Ensure prompt_file stays within PROMPTS_DIR
+            try:
+                prompt_file.relative_to(PROMPTS_DIR)
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Accès non autorisé au fichier de prompt")
+
+            if prompt_file.is_file():
                 with open(prompt_file, "r", encoding="utf-8") as f:
                     content = f.read()
                 return analyzer.analyze_prompt(content)
+            else:
+                # If a .md file was explicitly specified but does not exist, reject or treat as invalid file
+                raise HTTPException(status_code=400, detail=f"Fichier de prompt introuvable: {file_name}")
 
         return analyzer.analyze_prompt(payload.prompt)
     except ValueError as e:
@@ -63,13 +77,11 @@ def analyze_prompt(payload: PromptAnalysisRequest):
 
 @app.get("/api/prompts")
 def get_prompts():
-    import os
-    prompts_dir = "prompts"
-    if not os.path.exists(prompts_dir):
+    if not PROMPTS_DIR.exists():
         return []
 
-    files = [f for f in os.listdir(prompts_dir) if f.endswith(".md")]
-    return [{"id": f, "name": f.replace(".md", "")} for f in files]
+    files = [f.name for f in PROMPTS_DIR.glob("*.md") if f.is_file()]
+    return [{"id": f, "name": f.replace(".md", "")} for f in sorted(files)]
 
 @app.get("/api/model/info")
 def get_model_info():

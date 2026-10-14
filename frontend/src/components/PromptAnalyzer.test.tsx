@@ -22,7 +22,24 @@ describe('PromptAnalyzer Component', () => {
     ]);
   });
 
-  it('submits custom prompt when form is submitted', async () => {
+  it('submits free-text prompt when typed into input field', async () => {
+    const handleAnalyze = vi.fn();
+    render(
+      <PromptAnalyzer
+        onAnalyzePrompt={handleAnalyze}
+        loading={false}
+        domainsMap={mockDomains}
+      />
+    );
+
+    const input = screen.getByTestId('custom-prompt-input');
+    fireEvent.change(input, { target: { value: 'Algorithme de tri fusion en Python' } });
+    fireEvent.click(screen.getByRole('button', { name: /Analyser le Prompt/i }));
+
+    expect(handleAnalyze).toHaveBeenCalledWith('Algorithme de tri fusion en Python');
+  });
+
+  it('selects and submits predefined .md prompt from dropdown', async () => {
     const handleAnalyze = vi.fn();
     render(
       <PromptAnalyzer
@@ -57,3 +74,4 @@ describe('PromptAnalyzer Component', () => {
     expect(screen.getByRole('alert')).toHaveTextContent(/Note de prévention/i);
   });
 });
+

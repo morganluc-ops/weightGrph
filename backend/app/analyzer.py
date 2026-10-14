@@ -318,9 +318,9 @@ class MoEAnalyzer:
             dtype = torch.float16 if device == "cuda" else torch.float32
 
             if getattr(config, "is_encoder_decoder", False) or "switch" in getattr(config, "model_type", "").lower():
-                model = AutoModelForSeq2SeqLM.from_pretrained(model_id, dtype=dtype)
+                model = AutoModelForSeq2SeqLM.from_pretrained(model_id, torch_dtype=dtype)
             else:
-                model = AutoModelForCausalLM.from_pretrained(model_id, dtype=dtype)
+                model = AutoModelForCausalLM.from_pretrained(model_id, torch_dtype=dtype)
 
             model.to(device)
             model.eval()
